@@ -21,4 +21,8 @@ Produção em https://sail-pro.sailstation.com (segue a `main` testada) e teste 
 
 ## Contribuição
 
+O repositório canônico é [sailstation/sail-simulator-pro](https://github.com/sailstation/sail-simulator-pro) ([ADR-0002](docs/adr/0002-repositorio-canonico.md)). Issues e PRs são abertos somente nele.
+
 Siga [ADR-0001](docs/adr/0001-fluxo.md). Abra uma issue com objetivo e critérios de aceite. Registre a decisão antes de implementar. Trabalhe em uma branch por issue e vincule seu PR usando Closes #N. A próxima feature começa após o encerramento do PR da anterior.
+
+Agentes de IA e colaboradores devem ler o [AGENTS.md](AGENTS.md) antes de alterar o projeto.

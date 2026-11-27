@@ -1,0 +1,1 @@
+Antes de qualquer alteração, leia e siga o arquivo AGENTS.md na raiz do repositório. Ele é a fonte única das regras para agentes de IA, inclusive a leitura obrigatória de docs/adr/README.md e das issues de ADR.
