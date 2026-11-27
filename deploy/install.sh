@@ -7,8 +7,11 @@ cd "$(dirname "$0")"
 NODE_MAJOR=24
 export DEBIAN_FRONTEND=noninteractive
 
-apt-get update -qq
-apt-get install -y -qq git caddy curl xz-utils ca-certificates jq postgresql >/dev/null
+PACKAGES="git caddy curl xz-utils ca-certificates jq postgresql"
+if ! dpkg -s $PACKAGES >/dev/null 2>&1; then
+  apt-get update -qq
+  apt-get install -y -qq $PACKAGES >/dev/null
+fi
 systemctl enable -q --now postgresql
 
 if ! /opt/node/bin/node --version 2>/dev/null | grep -q "^v$NODE_MAJOR\."; then
@@ -21,7 +24,7 @@ fi
 export PATH=/opt/node/bin:$PATH
 
 for u in sail-build sail-prod sail-test; do id "$u" >/dev/null 2>&1 || useradd --system --no-create-home --shell /usr/sbin/nologin "$u"; done
-mkdir -p /opt/sail/{bin,state,releases,prod,test,schema}
+mkdir -p /opt/sail/{bin,state,releases,prod,test,schema,infra}
 
 for e in prod test; do
   sudo -u postgres psql -qtAc "SELECT 1 FROM pg_roles WHERE rolname='sail-$e'" | grep -q 1 || sudo -u postgres psql -qc "CREATE ROLE \"sail-$e\" LOGIN"
@@ -30,7 +33,8 @@ for e in prod test; do
 done
 
 install -m 644 serve.mjs package.json /opt/sail/bin/
-install -m 755 deploy.sh /opt/sail/bin/
+# Scripts em execução são trocados por renomeação atômica, nunca sobrescritos no lugar.
+for f in deploy.sh infra-apply.sh; do install -m 755 "$f" "/opt/sail/bin/.$f.new" && mv -f "/opt/sail/bin/.$f.new" "/opt/sail/bin/$f"; done
 install -m 644 postgres/*.sql /opt/sail/schema/
 install -m 644 env/prod.env env/test.env /opt/sail/
 install -m 644 systemd/sail@.service systemd/sail-deploy.service systemd/sail-deploy.timer /etc/systemd/system/
@@ -40,7 +44,8 @@ chmod -R a+rX /opt/sail/bin /opt/sail/schema
 
 systemctl daemon-reload
 systemctl enable -q sail@prod sail@test
-/opt/sail/bin/deploy.sh
+# Dentro do GitOps (infra-apply.sh) o deploy já está em andamento; na instalação manual, publica agora.
+[ "${SAIL_SKIP_DEPLOY:-0}" = 1 ] || /opt/sail/bin/deploy.sh
 systemctl restart sail@prod sail@test
 caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile >/dev/null
 systemctl reload-or-restart caddy

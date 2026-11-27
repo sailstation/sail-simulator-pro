@@ -43,12 +43,41 @@ run_checks() { # dir -> define TESTS e BUILD
   sandbox "$1" node scripts/build-site.mjs > "$1/build.log" 2>&1 && BUILD=ok || BUILD=falhou
 }
 
-# Produção: main, somente se testes e build passarem.
+app_healthy() { # porta
+  for i in $(seq 1 10); do
+    curl -fsS -m 5 -o /dev/null "http://127.0.0.1:$1/" &&
+    [ "$(curl -s -m 5 -o /dev/null -w '%{http_code}' -X POST -H 'content-type: application/json' \
+        -d '{"code":"AAAA222","token":"x"}' "http://127.0.0.1:$1/api/rooms/sync")" = 404 ] && return 0
+    sleep 2
+  done
+  return 1
+}
+
+# Produção: main, somente se testes e build passarem; reverte sozinha se não ficar saudável.
 sha=$($GIT rev-parse refs/heads/main)
 if [ "$sha" != "$(cat $BASE/state/prod.sha 2>/dev/null)" ] && [ "$sha" != "$(cat $BASE/state/prod.failed 2>/dev/null)" ]; then
   dir=$(release "$sha"); run_checks "$dir"
-  if [ "$TESTS" = ok ] && [ "$BUILD" = ok ]; then activate prod "$sha" "$dir" "$TESTS" "$BUILD" main
+  if [ "$TESTS" = ok ] && [ "$BUILD" = ok ]; then
+    previous=$(readlink -f "$BASE/prod/current" 2>/dev/null || true)
+    activate prod "$sha" "$dir" "$TESTS" "$BUILD" main
+    if ! app_healthy 9000; then
+      echo "prod: $sha não ficou saudável; revertendo para $previous"
+      echo "$sha" > "$BASE/state/prod.failed"
+      if [ -n "$previous" ]; then
+        ln -sfn "$previous" "$BASE/prod/current"; basename "$previous" > "$BASE/state/prod.sha"; systemctl restart sail@prod
+      fi
+    fi
   else echo "$sha" > "$BASE/state/prod.failed"; echo "prod: $sha rejeitado (testes=$TESTS build=$BUILD); produção mantida"; fi
+fi
+
+# Infraestrutura (GitOps): deploy/ da main testada é aplicado sozinho, com validação, backup e rollback.
+# Só a main aplica infraestrutura; PRs nunca rodam como root.
+if [ "$(cat $BASE/state/prod.sha 2>/dev/null)" = "$sha" ]; then
+  tree=$($GIT rev-parse -q --verify "$sha:deploy" 2>/dev/null || true)
+  if [ -n "$tree" ] && [ "$tree" != "$(cat $BASE/state/infra.tree 2>/dev/null)" ] && [ "$tree" != "$(cat $BASE/state/infra.failed 2>/dev/null)" ]; then
+    stage=$(mktemp -d); $GIT show "$sha:deploy/infra-apply.sh" > "$stage/infra-apply.sh" && chmod 700 "$stage/infra-apply.sh"
+    "$stage/infra-apply.sh" "$sha" "$tree"; rm -rf "$stage"
+  fi
 fi
 
 # Teste: último push em PR de branch deste repositório (PRs de forks externos não são executados).
