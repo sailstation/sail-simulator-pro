@@ -8,6 +8,7 @@ Vale para Codex, Claude e qualquer outro agente ou pessoa que trabalhe neste pro
 3. Leia a issue que você vai resolver, com os comentários. Leia também as issues de ADR propostas que ela cita (label `adr`, épico #19).
 4. Se a mudança toca o servidor ou `deploy/`, leia `docs/infra/servidor.md`.
 5. Se algo não estiver decidido em um ADR aceito, não decida sozinho: pergunte ou proponha um ADR.
+6. Não use Docker nem contêineres.
 
 ## Repositório
 - O repositório canônico é **sailstation/sail-simulator-pro** ([ADR-0002](docs/adr/0002-repositorio-canonico.md)). Abra issues, branches e PRs somente nele. Com `gh`, use `-R sailstation/sail-simulator-pro`.
@@ -28,6 +29,7 @@ Vale para Codex, Claude e qualquer outro agente ou pessoa que trabalhe neste pro
 - Não invente dados técnicos (dimensões, deslocamento, polares, regras, licenças) nem resultados de testes. Cite a fonte e marque estimativas como estimativas, nunca como dados oficiais.
 - Diga explicitamente o que não foi validado, por exemplo desempenho em aparelho real, build iOS ou Android, ou corrida entre clientes diferentes.
 - Não comite segredos, tokens nem credenciais.
+- Não use Docker nem qualquer contêiner (docker, podman, `services:`/`container:` no GitHub Actions, imagens OCI), em desenvolvimento, testes, CI ou servidor. PostgreSQL e demais serviços rodam nativos. (definição da equipe, 27/11/2026, aceite do responsável pendente)
 - Antes de abrir um PR, rode os testes e anexe o resultado no PR:
 
 ```sh

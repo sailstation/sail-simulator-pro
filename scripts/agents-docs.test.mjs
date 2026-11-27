@@ -28,3 +28,17 @@ test("todo ADR está no índice, com número único e estado declarado", () => {
     assert.match(read(`docs/adr/${file}`), /^Estado: /m, `${file} sem linha "Estado:"`);
   }
 });
+
+test("AGENTS.md registra a proibição de Docker e contêineres", () => {
+  const agents = read("AGENTS.md");
+  assert.match(agents, /Não use Docker nem qualquer contêiner/, "AGENTS.md sem a regra que proíbe Docker e contêineres");
+});
+
+test("nenhum workflow do GitHub Actions usa Docker ou contêineres", () => {
+  const dir = ".github/workflows";
+  for (const file of readdirSync(dir)) {
+    const text = read(`${dir}/${file}`);
+    assert.doesNotMatch(text, /^\s*(services|container):/m, `${file}: services:/container: proibido`);
+    assert.doesNotMatch(text, /docker/i, `${file}: menção a docker proibida`);
+  }
+});
