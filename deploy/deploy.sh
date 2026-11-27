@@ -1,5 +1,6 @@
 #!/bin/bash
 # Atualiza produção (main, só se testes e build passarem) e teste (último push em PR, mesmo com testes falhando).
+# Reconhece o formato de cada release (nativa ou legada, via release-format.sh) durante a transição do ADR-0004.
 set -uo pipefail
 BASE=/opt/sail
 REPO=https://github.com/sailstation/sail-simulator-pro.git
@@ -11,12 +12,22 @@ export PATH=/opt/node/bin:$PATH
 $GIT fetch -q --prune origin '+refs/heads/*:refs/heads/*' '+refs/pull/*/head:refs/pull/*/head' || { echo "fetch falhou"; exit 1; }
 
 # Executa código do repositório como usuário sem privilégios, sem rede e sem acesso aos dados.
+# O socket do PostgreSQL fica acessível para os testes do backend nativo (banco sail_ci, auth peer).
 sandbox() { # dir cmd...
   local dir=$1; shift
   systemd-run --quiet --wait --pipe --collect --uid=sail-build --gid=sail-build \
     -p WorkingDirectory="$dir" -p PrivateNetwork=yes -p ProtectSystem=strict -p ProtectHome=yes \
-    -p ReadWritePaths="$dir" -p PrivateTmp=yes -p NoNewPrivileges=yes -p RuntimeMaxSec=300 \
+    -p ReadWritePaths="$dir /run/postgresql" -p PrivateTmp=yes -p NoNewPrivileges=yes -p RuntimeMaxSec=300 \
     -p MemoryMax=2G -E PATH=/opt/node/bin:/usr/bin:/bin "$@"
+}
+
+# Dependências da release nativa (npm ci --ignore-scripts) com rede, em etapa separada do sandbox.
+npm_ci() { # dir
+  systemd-run --quiet --wait --pipe --collect --uid=sail-build --gid=sail-build \
+    -p WorkingDirectory="$1" -p ProtectSystem=strict -p ProtectHome=yes \
+    -p ReadWritePaths="$1" -p PrivateTmp=yes -p NoNewPrivileges=yes -p RuntimeMaxSec=300 \
+    -p MemoryMax=1G -E PATH=/opt/node/bin:/usr/bin:/bin -E HOME=/tmp \
+    npm ci --ignore-scripts --no-audit --no-fund
 }
 
 release() { # sha -> diretório extraído
@@ -38,9 +49,20 @@ activate() { # env sha dir tests build source
   echo "$env -> $sha ($6) testes=$4 build=$5"
 }
 
-run_checks() { # dir -> define TESTS e BUILD
-  sandbox "$1" bash -c 'node --test scripts/*.test.mjs' > "$1/tests.log" 2>&1 && TESTS=ok || TESTS=falhou
-  sandbox "$1" node scripts/build-site.mjs > "$1/build.log" 2>&1 && BUILD=ok || BUILD=falhou
+# Testes e build conforme o formato da release (transição do ADR-0004):
+# nativo — npm ci, testes de scripts/ e server/ contra o banco sail_ci, build = main.mjs + node_modules/pg;
+# legado — testes de scripts/ e empacotamento do Worker (build-site.mjs).
+run_checks() { # dir -> define FORMAT, TESTS e BUILD
+  FORMAT=$("$(dirname "$0")/release-format.sh" "$1")
+  if [ "$FORMAT" = nativo ]; then
+    npm_ci "$1" > "$1/npm.log" 2>&1 && DEPS=ok || DEPS=falhou
+    sandbox "$1" bash -c 'node --test scripts/*.test.mjs &&
+      DATABASE_URL="postgresql://%2Frun%2Fpostgresql/sail_ci" node --test server/*.test.mjs' > "$1/tests.log" 2>&1 && TESTS=ok || TESTS=falhou
+    if [ "$DEPS" = ok ] && [ -f "$1/server/main.mjs" ] && [ -d "$1/node_modules/pg" ]; then BUILD=ok; else BUILD=falhou; fi
+  else
+    sandbox "$1" bash -c 'node --test scripts/*.test.mjs' > "$1/tests.log" 2>&1 && TESTS=ok || TESTS=falhou
+    sandbox "$1" node scripts/build-site.mjs > "$1/build.log" 2>&1 && BUILD=ok || BUILD=falhou
+  fi
 }
 
 app_healthy() { # porta
@@ -92,8 +114,8 @@ if [ -n "$changed" ] || [ ! -e "$BASE/test/current" ]; then
   else sha=$($GIT rev-parse refs/heads/main); src=main; fi
   if [ "$sha" != "$(cat $BASE/state/test.sha 2>/dev/null)" ]; then
     dir=$(release "$sha"); run_checks "$dir"
-    if [ -f "$dir/dist/server/index.js" ]; then activate test "$sha" "$dir" "$TESTS" "$BUILD" "$src"
-    else echo "test: $sha sem build utilizável (build=$BUILD); teste mantido"; fi
+    if "$(dirname "$0")/release-format.sh" --pronta "$dir"; then activate test "$sha" "$dir" "$TESTS" "$BUILD" "$src"
+    else echo "test: $sha sem build utilizável (formato=$FORMAT build=$BUILD); teste mantido"; fi
   fi
 fi
 echo "$current" > "$BASE/state/test.refs"

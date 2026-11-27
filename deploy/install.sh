@@ -31,10 +31,14 @@ for e in prod test; do
   sudo -u postgres psql -qtAc "SELECT 1 FROM pg_database WHERE datname='sail_$e'" | grep -q 1 || sudo -u postgres createdb -O "sail-$e" "sail_$e"
   sudo -u postgres psql -qc "REVOKE ALL ON DATABASE sail_$e FROM PUBLIC"
 done
+# Banco dos testes do backend nativo no deploy (deploy.sh); o papel é o usuário que roda os testes (auth peer).
+sudo -u postgres psql -qtAc "SELECT 1 FROM pg_roles WHERE rolname='sail-build'" | grep -q 1 || sudo -u postgres psql -qc "CREATE ROLE \"sail-build\" LOGIN"
+sudo -u postgres psql -qtAc "SELECT 1 FROM pg_database WHERE datname='sail_ci'" | grep -q 1 || sudo -u postgres createdb -O sail-build sail_ci
+sudo -u postgres psql -qc "REVOKE ALL ON DATABASE sail_ci FROM PUBLIC"
 
 install -m 644 serve.mjs package.json /opt/sail/bin/
 # Scripts em execução são trocados por renomeação atômica, nunca sobrescritos no lugar.
-for f in deploy.sh infra-apply.sh; do install -m 755 "$f" "/opt/sail/bin/.$f.new" && mv -f "/opt/sail/bin/.$f.new" "/opt/sail/bin/$f"; done
+for f in deploy.sh infra-apply.sh start.sh release-format.sh; do install -m 755 "$f" "/opt/sail/bin/.$f.new" && mv -f "/opt/sail/bin/.$f.new" "/opt/sail/bin/$f"; done
 install -m 644 postgres/*.sql /opt/sail/schema/
 install -m 644 env/prod.env env/test.env /opt/sail/
 install -m 644 systemd/sail@.service systemd/sail-deploy.service systemd/sail-deploy.timer /etc/systemd/system/

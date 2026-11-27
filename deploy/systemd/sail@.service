@@ -8,7 +8,7 @@ User=sail-%i
 Group=sail-%i
 EnvironmentFile=/opt/sail/%i.env
 Environment=SAIL_APP=/opt/sail/%i/current SAIL_ENV=%i
-ExecStart=/opt/node/bin/node /opt/sail/bin/serve.mjs
+ExecStart=/opt/sail/bin/start.sh
 Restart=always
 RestartSec=2
 NoNewPrivileges=yes

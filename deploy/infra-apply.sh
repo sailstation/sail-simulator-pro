@@ -18,15 +18,18 @@ $GIT archive "$SHA" deploy | tar -x -C "$STAGE" || fail "não foi possível extr
 SRC=$STAGE/deploy
 
 # 2. Validação antes de tocar em qualquer coisa.
-for f in deploy.sh install.sh infra-apply.sh; do bash -n "$SRC/$f" || fail "sintaxe inválida em $f"; done
+for f in deploy.sh install.sh infra-apply.sh start.sh release-format.sh; do bash -n "$SRC/$f" || fail "sintaxe inválida em $f"; done
 node --check "$SRC/serve.mjs" || fail "serve.mjs inválido"
 caddy validate --config "$SRC/caddy/Caddyfile" --adapter caddyfile >/dev/null 2>&1 || fail "Caddyfile inválido"
 units=$(mktemp -d); cp "$SRC/systemd/sail-deploy.service" "$SRC/systemd/sail-deploy.timer" "$units/"; cp "$SRC/systemd/sail@.service" "$units/sail@prod.service"
+# Na primeira aplicação /opt/sail/bin/start.sh ainda não existe; valida a unit com o arquivo extraído.
+sed -i "s|^ExecStart=.*|ExecStart=$SRC/start.sh|" "$units/sail@prod.service"
 systemd-analyze verify "$units"/* >/dev/null 2>&1 || fail "units systemd inválidas"; rm -rf "$units"
 
 # 3. Backup do que está instalado.
 mkdir -p "$BASE/infra"
-tar -cf "$BACKUP" -C / $(cd / && ls -d opt/sail/bin/serve.mjs opt/sail/bin/deploy.sh opt/sail/bin/infra-apply.sh opt/sail/bin/package.json \
+tar -cf "$BACKUP" -C / $(cd / && ls -d opt/sail/bin/serve.mjs opt/sail/bin/deploy.sh opt/sail/bin/infra-apply.sh \
+  opt/sail/bin/start.sh opt/sail/bin/release-format.sh opt/sail/bin/package.json \
   opt/sail/schema opt/sail/prod.env opt/sail/test.env etc/systemd/system/sail@.service etc/systemd/system/sail-deploy.service \
   etc/systemd/system/sail-deploy.timer etc/caddy/Caddyfile 2>/dev/null) || fail "backup falhou"
 
