@@ -45,7 +45,8 @@ NOW=$(date +%s%3N)
 "${PSQL[@]}" -d legado -c "INSERT INTO rooms(code,settings,created,expires) VALUES('LEGADO2','{\"venue\":\"central\"}',$NOW,$((NOW + 86400000)))"
 "${PSQL[@]}" -d legado -c "INSERT INTO sailors(room,seat,id,token,name,seen) VALUES('LEGADO2',0,'leg-host','123e4567-e89b-42d3-a456-426614174000','Legado',$NOW)"
 
-PORT=53931 DATABASE_URL="postgresql://$SOCKET:54329/legado" node server/main.mjs > "$DIR/main.log" 2>&1 &
+PORT=53931 DATABASE_URL="postgresql://$SOCKET:54329/legado" SAIL_ENV=test SAIL_BASE_URL="http://127.0.0.1:53931" \
+  node server/main.mjs > "$DIR/main.log" 2>&1 &
 APP_PID=$!
 for _ in $(seq 1 20); do
   curl -fsS -m 2 -o /dev/null "http://127.0.0.1:53931/__deploy" 2>/dev/null && break
@@ -56,10 +57,29 @@ done
 node deploy/e2e.mjs http://127.0.0.1:53931
 
 node --input-type=module <<'JS'
-const r = await fetch("http://127.0.0.1:53931/api/rooms/sync", {
-  method: "POST", headers: { "content-type": "application/json" },
-  body: JSON.stringify({ code: "LEGADO2", token: "123e4567-e89b-42d3-a456-426614174000" })
+// A API de salas exige sessão (ADR-0005): cria conta, confirma pela rota de teste e entra.
+import { createHash } from "node:crypto";
+const post = (a, b, cookie = "") => fetch(`http://127.0.0.1:53931/api/${a}`, {
+  method: "POST", headers: { "content-type": "application/json", cookie }, body: JSON.stringify(b)
 });
+const solve = ({ challenge, signature }) => {
+  const bits = Number(challenge.split(".")[2]);
+  for (let nonce = 0; ; nonce++) {
+    const digest = createHash("sha256").update(`${challenge}.${nonce}`).digest();
+    let zeros = 0;
+    for (const byte of digest) { if (byte === 0) { zeros += 8; continue; } zeros += Math.clz32(byte) - 24; break; }
+    if (zeros >= bits) return { challenge, signature, nonce };
+  }
+};
+const email = "legado@teste.invalid";
+const challenge = await (await post("auth/challenge", {})).json();
+await post("auth/signup", { email, password: "senha-do-cenario", pow: solve(challenge) });
+await post("auth/test-confirm", { email });
+const login = await post("auth/login", { email, password: "senha-do-cenario" });
+const cookie = login.headers.get("set-cookie")?.split(";")[0];
+if (!cookie) { console.error("FALHOU: login do cenário legado"); process.exit(1); }
+
+const r = await post("rooms/sync", { code: "LEGADO2", token: "123e4567-e89b-42d3-a456-426614174000" }, cookie);
 if (r.status !== 200) { console.error("FALHOU: sala do banco legado ilegível:", r.status); process.exit(1); }
 const room = await r.json();
 if (!room.players.some(p => p.name === "Legado" && p.seat === 0)) {
@@ -74,3 +94,23 @@ echo "ok: migração 0000 não foi reaplicada sobre o banco legado"
 kill "$APP_PID" && wait "$APP_PID" 2>/dev/null || true
 APP_PID=""
 echo "cenário legado concluído"
+
+echo "== cenário: transição sem SMTP (login desligado; sonda do deploy.sh antigo) =="
+# Sem SAIL_ENV=test, sem SMTP_HOST e sem SAIL_LOGIN_REQUIRED o login fica desligado e a
+# release precisa passar no app_healthy do deploy.sh da main: / com sucesso e
+# /api/rooms/sync respondendo exatamente 404. Se isso quebrar, o deploy reverteria a release
+# e a infra do ADR-0005 nunca seria aplicada (ver docs/infra/servidor.md, "Login e e-mail").
+PORT=53932 DATABASE_URL="postgresql://$SOCKET:54329/legado" \
+  node server/main.mjs > "$DIR/main-aberto.log" 2>&1 &
+APP_PID=$!
+for _ in $(seq 1 20); do
+  curl -fsS -m 2 -o /dev/null "http://127.0.0.1:53932/__deploy" 2>/dev/null && break
+  kill -0 "$APP_PID" 2>/dev/null || { echo "server/main.mjs (modo aberto) morreu na partida" >&2; cat "$DIR/main-aberto.log" >&2; exit 1; }
+  sleep 0.5
+done
+curl -fsS -m 5 -o /dev/null "http://127.0.0.1:53932/" || { echo "FALHOU: / sem sessão no modo aberto" >&2; exit 1; }
+CODE=$(curl -s -m 5 -o /dev/null -w '%{http_code}' -X POST -H 'content-type: application/json' \
+  -d '{"code":"AAAA222","token":"x"}' "http://127.0.0.1:53932/api/rooms/sync")
+[ "$CODE" = 404 ] || { echo "FALHOU: sonda do deploy antigo esperava 404, veio $CODE" >&2; exit 1; }
+grep -q "login obrigatório: desligado" "$DIR/main-aberto.log" || { echo "FALHOU: aviso de login desligado ausente no log" >&2; exit 1; }
+echo "ok: modo aberto passa na sonda do deploy antigo (200 em /, 404 em /api/rooms/sync)"

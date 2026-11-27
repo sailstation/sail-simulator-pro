@@ -9,17 +9,20 @@ export const MIGRATIONS = new URL("../db/migrations/", import.meta.url);
 
 // Aceita os formatos do libpq, inclusive socket Unix percent-encoded:
 // postgresql://%2Fvar%2Frun%2Fpostgresql/sail_prod
-export function createPool(connectionString = process.env.DATABASE_URL) {
+export function createPool(connectionString = process.env.DATABASE_URL, extra = {}) {
   if (!connectionString) {
     throw new Error("Defina DATABASE_URL (ex.: postgresql://%2Fvar%2Frun%2Fpostgresql/sail_prod).");
   }
-  return new pg.Pool({ connectionString, max: 10 });
+  return new pg.Pool({ connectionString, max: 10, ...extra });
 }
 
 // Aplica db/migrations/*.sql em ordem alfabética, uma única vez cada, registrando em _migrations.
+// A trava consultiva serializa migrações simultâneas (testes em paralelo, processos subindo juntos).
+const MIGRATION_LOCK = 727001;
 export async function migrate(pool, dir = MIGRATIONS) {
   const client = await pool.connect();
   try {
+    await client.query("SELECT pg_advisory_lock($1)", [MIGRATION_LOCK]);
     await client.query("CREATE TABLE IF NOT EXISTS _migrations (name TEXT PRIMARY KEY, applied BIGINT NOT NULL)");
     for (const name of readdirSync(dir).filter(file => file.endsWith(".sql")).sort()) {
       if ((await client.query("SELECT 1 FROM _migrations WHERE name=$1", [name])).rowCount) continue;
@@ -35,6 +38,7 @@ export async function migrate(pool, dir = MIGRATIONS) {
       }
     }
   } finally {
+    await client.query("SELECT pg_advisory_unlock($1)", [MIGRATION_LOCK]).catch(() => {});
     client.release();
   }
 }

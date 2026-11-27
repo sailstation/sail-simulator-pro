@@ -18,6 +18,7 @@ function createRoomClient({getSettings, getBoat, onRace, onFleet, onClosed, prep
       signal:AbortSignal.timeout(7000)
     });
     const data=await response.json().catch(()=>({}));
+    if(response.status===401)location.assign("/login.html");
     if(!response.ok)throw Object.assign(new Error(data.error||"Não foi possível conectar à sala."),{status:response.status});
     return data;
   }
