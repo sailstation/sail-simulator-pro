@@ -26,6 +26,7 @@ As portas HTTP redirecionam para HTTPS e atendem a validação ACME. O Caddy ren
 | Node 24 | `/opt/node` |
 | Adaptador Worker → Node/PostgreSQL | `/opt/sail/bin/serve.mjs` (fonte: `deploy/serve.mjs`) |
 | Deploy contínuo | `/opt/sail/bin/deploy.sh`, `sail-deploy.timer` (a cada minuto) |
+| Aplicação de infraestrutura | `/opt/sail/bin/infra-apply.sh`, backups em `/opt/sail/infra/` |
 | Releases | `/opt/sail/releases/<commit>` (as 10 mais recentes), `/opt/sail/{prod,test}/current` |
 | Estado do deploy | `/opt/sail/state/` (`prod.sha`, `prod.failed`, `test.sha`, `test.refs`) |
 | Esquema do banco | `/opt/sail/schema` (fonte: `deploy/postgres/`), aplicado na partida do serviço |
@@ -46,8 +47,30 @@ sudo -u postgres psql sail_prod         # banco
 
 - **Produção recusou um commit:** o commit fica em `/opt/sail/state/prod.failed` e a versão anterior continua no ar. Corrija com um novo merge na `main`.
 - **Voltar a produção para um commit anterior:** `ln -sfn /opt/sail/releases/<commit> /opt/sail/prod/current && systemctl restart sail@prod`. O próximo merge na `main` publica normalmente.
-- **Mudanças em `deploy/`:** não são aplicadas pelo deploy contínuo. Depois do merge, no servidor: `git -C /opt/sail/src pull && /opt/sail/src/deploy/install.sh` (ou a partir de qualquer clone).
+- **Produção não ficou saudável após publicar:** o deploy volta sozinho para a release anterior e grava o commit em `prod.failed`.
 - **Nova migração:** acrescente `drizzle/NNNN_*.sql` (D1) e o equivalente `deploy/postgres/NNNN_*.sql` no mesmo PR.
+
+## Infraestrutura como código (GitOps)
+
+Mudanças em `deploy/` se aplicam sozinhas quando chegam à `main` e a produção daquele commit foi publicada com testes ok. Nenhum PR aplica infraestrutura: só a `main` roda como root.
+
+```
+merge na main ─▶ testes e build ok ─▶ produção publicada e saudável
+              ─▶ deploy/ mudou? ─▶ infra-apply.sh do próprio commit
+                    1. extrai deploy/ direto do Git
+                    2. valida: sintaxe dos scripts, serve.mjs, Caddyfile, units systemd
+                    3. backup em /opt/sail/infra/backup-*.tar (mantém 5)
+                    4. install.sh (sem disparar outro deploy)
+                    5. saúde por até 60 s: serviços ativos, produção responde e alcança o banco, TLS dos dois nomes
+                    6. ok → grava infra.tree │ falha → restaura o backup, reinicia e grava infra.failed
+```
+
+- Estado: `/opt/sail/state/infra.tree` (aplicada) e `infra.failed` (recusada; não é tentada de novo até um novo commit mudar `deploy/`).
+- Log: `journalctl -u sail-deploy | grep infra`.
+- Migrações de banco não são revertidas pelo rollback. Escreva migrações compatíveis com a versão anterior (expandir antes, contrair depois).
+- Fora do escopo do GitOps: rotas no Rudder/HAProxy, DNS e criação da VM.
+
+Validado em 27/11/2026 com commits de teste locais no servidor: Caddyfile inválido foi recusado antes de instalar; um `serve.mjs` que deixava a produção fora do ar foi instalado, detectado pela verificação de saúde e revertido sozinho (cerca de 1 min de indisponibilidade).
 
 ## Instalação do zero
 

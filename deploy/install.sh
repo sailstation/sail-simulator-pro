@@ -47,7 +47,7 @@ systemctl enable -q sail@prod sail@test
 # Dentro do GitOps (infra-apply.sh) o deploy já está em andamento; na instalação manual, publica agora.
 [ "${SAIL_SKIP_DEPLOY:-0}" = 1 ] || /opt/sail/bin/deploy.sh
 systemctl restart sail@prod sail@test
-caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile >/dev/null
+caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile >/dev/null 2>&1 || { echo "Caddyfile inválido" >&2; exit 1; }
 systemctl reload-or-restart caddy
 systemctl enable -q --now sail-deploy.timer
 echo "Instalação concluída."
