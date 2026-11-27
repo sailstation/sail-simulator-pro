@@ -1,6 +1,6 @@
 # Servidor do Sail Simulator Pro
 
-Decisões registradas no [ADR-0003](../adr/0003-hospedagem-postgresql.md) (hospedagem) e no [ADR-0004](../adr/0004-postgresql-banco-do-projeto.md) (backend nativo com PostgreSQL). Docker e contêineres são proibidos: todos os serviços rodam nativos.
+Decisões registradas no [ADR-0003](../adr/0003-hospedagem-postgresql.md) (hospedagem), no [ADR-0004](../adr/0004-postgresql-banco-do-projeto.md) (backend nativo com PostgreSQL) e no [ADR-0005](../adr/0005-contas-login-confirmacao-email.md) (contas e login obrigatório). Docker e contêineres são proibidos: todos os serviços rodam nativos.
 
 | Ambiente | Endereço | O que publica |
 | --- | --- | --- |
@@ -25,7 +25,7 @@ As portas HTTP redirecionam para HTTPS e atendem a validação ACME. O Caddy ren
 | --- | --- |
 | Node 24 | `/opt/node` |
 | Lançador do app | `/opt/sail/bin/start.sh` (fonte: `deploy/start.sh`): roda `current/server/main.mjs` quando a release tem backend nativo; senão, o adaptador legado |
-| Backend nativo (API de salas + estáticos) | `server/main.mjs` na release, com `pg` instalado por `npm ci`; variáveis `DATABASE_URL` e `PORT` em `/opt/sail/{prod,test}.env` |
+| Backend nativo (API de contas e salas + estáticos) | `server/main.mjs` na release, com `pg` instalado por `npm ci`; variáveis em `/opt/sail/{prod,test}.env` e segredos em `/opt/sail/{prod,test}.secrets.env` (ver "Login e e-mail") |
 | Adaptador legado Worker → Node/PostgreSQL | `/opt/sail/bin/serve.mjs` (fonte: `deploy/serve.mjs`), só para releases antigas (rollback) |
 | Deploy contínuo | `/opt/sail/bin/deploy.sh`, `sail-deploy.timer` (a cada minuto) |
 | Aplicação de infraestrutura | `/opt/sail/bin/infra-apply.sh`, backups em `/opt/sail/infra/` |
@@ -49,6 +49,29 @@ A transição acontece em dois merges, sem nenhum passo manual no servidor:
 
 1. **PR #30 (transição):** a árvore ainda é legada, então o `deploy.sh` antigo publica a `main` normalmente (testes de `scripts/` e `build-site.mjs` passam) e aplica o `deploy/` novo pelo GitOps: `release-format.sh`, `start.sh` como `ExecStart` da unit `sail@`, `PORT`/`DATABASE_URL` nos envs, banco `sail_ci` e papel `sail-build`. Como a release ativa é legada, o `start.sh` segue subindo o `serve.mjs`.
 2. **PR #31 (backend nativo):** o `deploy.sh` novo detecta a release nativa, roda `npm ci` e os testes de `server/` contra o `sail_ci`, publica e o `start.sh` sobe o `server/main.mjs`. Releases antigas (merge do #28/#30, PRs legados no ambiente de teste) continuam pelo caminho legado, então nenhuma delas trava o deploy.
+
+## Login e e-mail (ADR-0005)
+
+O site e a API de salas exigem sessão: sem cookie válido, os estáticos redirecionam para `/login.html` e `/api/rooms/*` responde 401. Só ficam públicos `/login.html`, `login.css`, `login.js`, a foto de fundo, `/__deploy` e `/api/auth/*`.
+
+Variáveis do backend (além de `PORT` e `DATABASE_URL`):
+
+| Variável | Onde | Para quê |
+| --- | --- | --- |
+| `SAIL_ENV` | unit `sail@` (automática: `prod`/`test`) | `test` habilita `/api/auth/test-confirm`, usada pelo `deploy/e2e.mjs` para confirmar a conta sem e-mail |
+| `SAIL_BASE_URL` | `/opt/sail/{prod,test}.env` | domínio dos links de confirmação e redefinição enviados por e-mail |
+| `SAIL_POW_SECRET` | `/opt/sail/{prod,test}.secrets.env` | segredo HMAC dos desafios do captcha de prova de trabalho; sem ele o processo gera um aleatório na partida (e avisa no log) |
+| `SAIL_POW_BITS` | opcional, padrão 16 | dificuldade do captcha (bits zero exigidos no hash) |
+| `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASS`, `SMTP_FROM` | `/opt/sail/{prod,test}.secrets.env` | envio dos e-mails de confirmação e recuperação; porta 587 usa STARTTLS, 465 TLS implícito, `SMTP_TLS=off` desliga (relay local). Sem `SMTP_HOST`, os e-mails vão para o log do serviço (`journalctl -u sail@…`) em vez de serem enviados |
+
+Os `.env` versionados são reinstalados pelo GitOps a cada mudança em `deploy/`; por isso segredos ficam em `/opt/sail/{prod,test}.secrets.env`, criados à mão no servidor (a unit `sail@` lê os dois arquivos) e nunca no repositório:
+
+```sh
+install -m 640 -o root -g sail-prod /dev/null /opt/sail/prod.secrets.env
+# SAIL_POW_SECRET=…  SMTP_HOST=…  SMTP_PORT=587  SMTP_USER=…  SMTP_PASS=…  SMTP_FROM="Sail <no-reply@…>"
+```
+
+O `deploy/e2e.mjs` cobre o fluxo completo (cadastro com prova de trabalho, confirmação pela rota de teste, login, salas e logout) e só funciona contra um servidor com `SAIL_ENV=test`. O health check do deploy aceita 401 de `/api/rooms/*` sem sessão (releases com login) além de 404 (releases antigas).
 
 ## Operação
 
