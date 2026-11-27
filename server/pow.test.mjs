@@ -30,7 +30,12 @@ test("desafio resolvido é aceito uma única vez", () => {
 test("nonce errado, assinatura adulterada e formato inválido são recusados", () => {
   const pow = createPow({ secret: "s", bits: 8 });
   const good = solve(pow);
-  assert.equal(pow.verify({ ...good, nonce: good.nonce + 1_000_003 }), false, "nonce que não resolve");
+  // Com 8 bits, um nonce qualquer resolve por acaso 1 vez em 256: escolhe um que comprovadamente não resolve,
+  // testando numa instância separada com o mesmo segredo (o uso único é por instância).
+  const probe = createPow({ secret: "s", bits: 8 });
+  let wrong = good.nonce + 1;
+  while (probe.verify({ ...good, nonce: wrong })) wrong += 1;
+  assert.equal(pow.verify({ ...good, nonce: wrong }), false, "nonce que não resolve");
   assert.equal(pow.verify({ ...good, signature: good.signature.replace(/../, "00") }), false, "assinatura adulterada");
   assert.equal(pow.verify({ ...good, signature: "zz" }), false, "assinatura não-hex");
   assert.equal(pow.verify({ ...good, signature: good.signature.slice(2) }), false, "assinatura curta");
