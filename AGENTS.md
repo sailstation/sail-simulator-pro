@@ -34,7 +34,7 @@ Vale para Codex, Claude e qualquer outro agente ou pessoa que trabalhe neste pro
 
 ```sh
 node --test scripts/*.test.mjs
-node scripts/build-site.mjs
+bash scripts/pg-test.sh   # backend contra PostgreSQL nativo temporário (ou: npm test)
 ```
 
 Para `ports/unity`, siga o README da pasta: `node --test Backend/rooms.test.mjs Tools/assets.test.mjs` e EditMode no Unity Test Runner.
