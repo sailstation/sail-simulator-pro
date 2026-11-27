@@ -26,6 +26,8 @@ O modo solo tem cinco bots. Os três cenários oferecem quatro raias. O menu per
 - **Lógica e regras de regata.** `RaceTests.cs` e `PassageTests.cs` cobrem fases do relógio, OCS, cruzamento pelos extremos, três voltas, giros, preferência e espaço na marca.
 - **Usabilidade e backend.** `UsabilityBackendTests.cs` cobre a curva de leme e o contrato de entrada e resposta das salas. `Backend/rooms.test.mjs` envia requisições HTTP simuladas para o Worker real com a migração SQL em SQLite em memória. Os casos exercitam lotação, validação, permissões, expiração lógica ao fechar, sincronização e separação entre assets e API.
 
+> `Backend/` é uma cópia legada do backend antigo (Cloudflare Worker + D1), mantida sem evolução só como referência deste porte. O backend real do projeto é o servidor nativo em `server/`, com PostgreSQL (ADR-0004); o contrato HTTP da API de salas é o mesmo.
+
 Execute `node --test Backend/rooms.test.mjs Tools/assets.test.mjs` com Node 24. No Unity Test Runner, escolha EditMode e Run All. Para automação em um ambiente com Editor licenciado, defina `UNITY_EDITOR` como o caminho do executável e rode `Tools/validate.sh`; o resultado NUnit sai em `Results/EditMode.xml`. Execute os testes novamente a cada alteração.
 
 O menu **Sail → Build** tem comandos para Web, Android, iOS, Windows, Linux e macOS. Cada destino exige o módulo correspondente no Unity Hub. Exemplo de linha de comando após selecionar o módulo e o alvo no host:
