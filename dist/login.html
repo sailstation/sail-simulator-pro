@@ -1,0 +1,53 @@
+<!doctype html><html lang="pt-BR"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><meta name="theme-color" content="#0d1b26"><meta name="robots" content="noindex"><title>Entrar — Sail Simulator Pro</title><meta name="description" content="Entre ou crie sua conta no Sail Simulator Pro."><link rel="stylesheet" href="login.css"></head>
+<body>
+<main class="tela">
+  <section class="cartao" aria-labelledby="titulo">
+    <p class="marca">Sail Simulator <strong>PRO</strong></p>
+
+    <form id="form-entrar" novalidate>
+      <h1 id="titulo">Entrar</h1>
+      <label for="entrar-email">E-mail</label>
+      <input id="entrar-email" name="email" type="email" autocomplete="email" required>
+      <label for="entrar-senha">Senha</label>
+      <input id="entrar-senha" name="password" type="password" autocomplete="current-password" required>
+      <button type="submit">Entrar</button>
+      <p class="linha"><a href="#cadastro" data-view="cadastro">Criar conta</a> · <a href="#recuperar" data-view="recuperar">Esqueci a senha</a></p>
+      <p class="linha" id="linha-reenviar" hidden><button type="button" class="link" id="botao-reenviar">Reenviar e-mail de confirmação</button></p>
+    </form>
+
+    <form id="form-cadastro" novalidate hidden>
+      <h1>Criar conta</h1>
+      <label for="cadastro-email">E-mail</label>
+      <input id="cadastro-email" name="email" type="email" autocomplete="email" required>
+      <label for="cadastro-senha">Senha (mínimo de 10 caracteres)</label>
+      <input id="cadastro-senha" name="password" type="password" autocomplete="new-password" minlength="10" required>
+      <label for="cadastro-senha2">Repita a senha</label>
+      <input id="cadastro-senha2" name="password2" type="password" autocomplete="new-password" minlength="10" required>
+      <button type="submit">Criar conta</button>
+      <p class="linha"><a href="#entrar" data-view="entrar">Já tenho conta</a></p>
+    </form>
+
+    <form id="form-recuperar" novalidate hidden>
+      <h1>Recuperar senha</h1>
+      <label for="recuperar-email">E-mail da conta</label>
+      <input id="recuperar-email" name="email" type="email" autocomplete="email" required>
+      <button type="submit">Enviar link de redefinição</button>
+      <p class="linha"><a href="#entrar" data-view="entrar">Voltar para entrar</a></p>
+    </form>
+
+    <form id="form-redefinir" novalidate hidden>
+      <h1>Nova senha</h1>
+      <label for="redefinir-senha">Senha nova (mínimo de 10 caracteres)</label>
+      <input id="redefinir-senha" name="password" type="password" autocomplete="new-password" minlength="10" required>
+      <label for="redefinir-senha2">Repita a senha</label>
+      <input id="redefinir-senha2" name="password2" type="password" autocomplete="new-password" minlength="10" required>
+      <button type="submit">Redefinir senha</button>
+      <p class="linha"><a href="#entrar" data-view="entrar">Voltar para entrar</a></p>
+    </form>
+
+    <p id="mensagem" role="status" aria-live="polite" hidden></p>
+    <p id="trabalho" hidden>Verificação anti-robô em andamento… <span id="trabalho-conta">0</span></p>
+  </section>
+</main>
+<script src="login.js" defer></script>
+</body></html>

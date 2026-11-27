@@ -1,1 +1,4 @@
+# dist/ é o cliente web versionado; reabre o que um .gitignore global possa ignorar.
+!/dist/
+!/dist/**
 /dist/server/

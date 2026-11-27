@@ -3,18 +3,26 @@
 import { test, before, after } from "node:test";
 import assert from "node:assert/strict";
 import { once } from "node:events";
+import { createHash } from "node:crypto";
 import { createPool, migrate } from "./db.mjs";
 import { createApp } from "./main.mjs";
+import { createAuthApi } from "./auth.mjs";
+import { createPow, leadingZeroBits } from "./pow.mjs";
 
-let pool, server, base;
+let pool, server, base, cookie;
 
 before(async () => {
   pool = createPool();
   await migrate(pool);
-  server = createApp({ pool, deployInfo: '{"env":"teste"}' });
+  const pow = createPow({ secret: "segredo-api", bits: 2 });
+  const auth = createAuthApi(pool, {
+    mail: { send: async () => {} }, pow, testMode: true, scryptParams: { N: 1024, r: 8, p: 1 }
+  });
+  server = createApp({ pool, deployInfo: '{"env":"teste"}', auth });
   server.listen(0, "127.0.0.1");
   await once(server, "listening");
   base = `http://127.0.0.1:${server.address().port}`;
+  cookie = await createAccount("anfitria@exemplo.com");
 });
 
 after(async () => {
@@ -22,13 +30,33 @@ after(async () => {
   await pool.end();
 });
 
-const call = async (action, body, headers = {}) => {
-  const r = await fetch(`${base}/api/rooms/${action}`, {
+const post = async (path, body, headers = {}) => {
+  const r = await fetch(`${base}${path}`, {
     method: "POST", headers: { "content-type": "application/json", ...headers }, body: JSON.stringify(body)
   });
   const text = await r.text();
-  return [r.status, text ? JSON.parse(text) : null];
+  return [r.status, text ? JSON.parse(text) : null, r];
 };
+
+// Resolve a prova de trabalho em Node, como o e2e faz.
+const solvePow = ({ challenge, signature }) => {
+  const bits = Number(challenge.split(".")[2]);
+  for (let nonce = 0; ; nonce++) {
+    if (leadingZeroBits(createHash("sha256").update(`${challenge}.${nonce}`).digest()) >= bits) return { challenge, signature, nonce };
+  }
+};
+
+// Cadastro + confirmação (rota de teste) + login; devolve o cookie de sessão.
+async function createAccount(email) {
+  const [, challenge] = await post("/api/auth/challenge", {});
+  assert.equal((await post("/api/auth/signup", { email, password: "senha-da-jogadora", pow: solvePow(challenge) }))[0], 200);
+  assert.equal((await post("/api/auth/test-confirm", { email }))[0], 200);
+  const [status, , r] = await post("/api/auth/login", { email, password: "senha-da-jogadora" });
+  assert.equal(status, 200);
+  return r.headers.get("set-cookie").split(";")[0];
+}
+
+const call = (action, body, headers = {}) => post(`/api/rooms/${action}`, body, { cookie, ...headers });
 
 const settings = { venue: "central", boatClass: "star", sky: "mixed",
   weather: { wind: 11, gust: 14, dir: 145, wave: .48, waveDir: 155, period: 7, tide: .15, tideRate: .11, current: .2, currentDir: 65 } };
@@ -211,21 +239,59 @@ test("requisições inválidas: método, origem, formato, tamanho, JSON e ação
   assert.equal((await call("sync", { code: host.code, token: crypto.randomUUID() }))[0], 404);
 });
 
-test("estáticos: index na raiz, ETag com 304, 404 e /__deploy", async () => {
-  const index = await fetch(`${base}/`);
+test("login obrigatório: sem sessão a API de salas responde 401 e o site redireciona para a entrada", async () => {
+  const [status, body] = await post("/api/rooms/create", { name: "A", settings });
+  assert.equal(status, 401);
+  assert.match(body.error, /Entre para jogar/);
+  assert.equal((await post("/api/rooms/sync", { code: "AAAA222", token: crypto.randomUUID() }))[0], 401);
+  const raiz = await fetch(`${base}/`, { redirect: "manual" });
+  assert.equal(raiz.status, 302);
+  assert.equal(raiz.headers.get("location"), "/login.html");
+  assert.equal((await fetch(`${base}/game.js`, { redirect: "manual" })).status, 302);
+  const comCookieRuim = await fetch(`${base}/`, { redirect: "manual", headers: { cookie: "sail_session=" + "x".repeat(43) } });
+  assert.equal(comCookieRuim.status, 302, "cookie inválido não abre o site");
+  // A tela de entrada e os assets dela abrem sem sessão.
+  for (const path of ["/login.html", "/login.css", "/login.js", "/sail-simulator-pro-splash.webp"]) {
+    assert.equal((await fetch(`${base}${path}`)).status, 200, path);
+  }
+  // Depois do login o mesmo caminho abre o site.
+  assert.equal((await fetch(`${base}/`, { headers: { cookie } })).status, 200);
+});
+
+test("cabeçalhos de segurança em todas as respostas", async () => {
+  for (const path of ["/login.html", "/__deploy"]) {
+    const r = await fetch(`${base}${path}`);
+    assert.equal(r.headers.get("x-content-type-options"), "nosniff");
+    assert.equal(r.headers.get("x-frame-options"), "DENY");
+    assert.equal(r.headers.get("referrer-policy"), "same-origin");
+    assert.match(r.headers.get("content-security-policy"), /default-src 'self'/);
+  }
+});
+
+test("logout encerra o acesso ao site e à API", async () => {
+  const proprio = await createAccount("sai-fora@exemplo.com");
+  assert.equal((await post("/api/rooms/create", { name: "A", settings }, { cookie: proprio }))[0], 200);
+  const [status, , r] = await post("/api/auth/logout", {}, { cookie: proprio });
+  assert.equal(status, 200);
+  assert.match(r.headers.get("set-cookie"), /Max-Age=0/);
+  assert.equal((await post("/api/rooms/create", { name: "A", settings }, { cookie: proprio }))[0], 401);
+});
+
+test("estáticos com sessão: index na raiz, ETag com 304, 404 e /__deploy", async () => {
+  const index = await fetch(`${base}/`, { headers: { cookie } });
   assert.equal(index.status, 200);
   assert.match(index.headers.get("content-type"), /text\/html/);
   assert.match(await index.text(), /</);
-  const js = await fetch(`${base}/game.js`);
+  const js = await fetch(`${base}/game.js`, { headers: { cookie } });
   assert.equal(js.status, 200);
   const etag = js.headers.get("etag");
   assert.ok(etag);
-  assert.equal((await fetch(`${base}/game.js`, { headers: { "if-none-match": etag } })).status, 304);
-  const head = await fetch(`${base}/game.js`, { method: "HEAD" });
+  assert.equal((await fetch(`${base}/game.js`, { headers: { cookie, "if-none-match": etag } })).status, 304);
+  const head = await fetch(`${base}/game.js`, { method: "HEAD", headers: { cookie } });
   assert.equal(head.status, 200);
   assert.equal((await head.text()).length, 0);
-  assert.equal((await fetch(`${base}/nao-existe`)).status, 404);
-  assert.equal((await fetch(`${base}/game.js`, { method: "POST" })).status, 404);
+  assert.equal((await fetch(`${base}/nao-existe`, { headers: { cookie } })).status, 404);
+  assert.equal((await fetch(`${base}/game.js`, { method: "POST", headers: { cookie } })).status, 404);
   const deploy = await fetch(`${base}/__deploy`);
   assert.equal(deploy.status, 200);
   assert.deepEqual(await deploy.json(), { env: "teste" });
@@ -234,7 +300,7 @@ test("estáticos: index na raiz, ETag com 304, 404 e /__deploy", async () => {
 test("migrações são idempotentes e ficam registradas em _migrations", async () => {
   await migrate(pool);
   const { rows } = await pool.query("SELECT name FROM _migrations");
-  assert.deepEqual(rows.map(r => r.name), ["0000_regatta_rooms.sql"]);
+  assert.deepEqual(rows.map(r => r.name), ["0000_regatta_rooms.sql", "0001_contas.sql"]);
 });
 
 test("pool sem DATABASE_URL falha na hora", () => {
