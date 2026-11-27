@@ -67,9 +67,12 @@ run_checks() { # dir -> define FORMAT, TESTS e BUILD
 
 app_healthy() { # porta
   for i in $(seq 1 10); do
+    # Sem sessão, /api/rooms/* responde 401 (backend com login, ADR-0005) ou 404 (releases antigas).
+    local code
+    code=$(curl -s -m 5 -o /dev/null -w '%{http_code}' -X POST -H 'content-type: application/json' \
+        -d '{"code":"AAAA222","token":"x"}' "http://127.0.0.1:$1/api/rooms/sync")
     curl -fsS -m 5 -o /dev/null "http://127.0.0.1:$1/" &&
-    [ "$(curl -s -m 5 -o /dev/null -w '%{http_code}' -X POST -H 'content-type: application/json' \
-        -d '{"code":"AAAA222","token":"x"}' "http://127.0.0.1:$1/api/rooms/sync")" = 404 ] && return 0
+    { [ "$code" = 401 ] || [ "$code" = 404 ]; } && return 0
     sleep 2
   done
   return 1

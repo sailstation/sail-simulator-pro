@@ -7,6 +7,8 @@ Wants=network-online.target postgresql.service
 User=sail-%i
 Group=sail-%i
 EnvironmentFile=/opt/sail/%i.env
+# Segredos (SAIL_POW_SECRET, SMTP_*): arquivo local do servidor, fora do GitOps e do repositório.
+EnvironmentFile=-/opt/sail/%i.secrets.env
 Environment=SAIL_APP=/opt/sail/%i/current SAIL_ENV=%i
 ExecStart=/opt/sail/bin/start.sh
 Restart=always
