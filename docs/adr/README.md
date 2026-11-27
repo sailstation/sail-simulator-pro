@@ -9,6 +9,7 @@ Leia este índice antes de propor ou implementar qualquer mudança. O fluxo est�
 | [0001](0001-fluxo.md) | Uma feature por vez | aceito | — |
 | [0002](0002-repositorio-canonico.md) | Repositório canônico | proposto | #27 |
 | [0003](0003-hospedagem-postgresql.md) | Hospedagem própria e PostgreSQL | proposto | #29 |
+| [0004](0004-postgresql-banco-do-projeto.md) | PostgreSQL como banco do projeto | proposto | #31 |
 
 Estados: **proposto** (aguardando aceite do responsável na issue), **aceito**, **substituído por ADR-NNNN**, **descontinuado**. ADR aceito não é editado; uma mudança gera um novo ADR que o substitui. O número é o próximo livre no momento do merge.
 

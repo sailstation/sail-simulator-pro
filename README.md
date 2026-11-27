@@ -1,18 +1,19 @@
 # Sail Simulator Pro
 
-Simulador de regatas da Sailing Solutions e Sail Station. O jogo publicado está em dist/. O backend multiplayer fica em worker/, com migrações em drizzle/. As versões Unity e Godot ficam em ports/, cada uma com seu próprio README.
+Simulador de regatas da Sailing Solutions e Sail Station. O jogo publicado está em dist/. O backend multiplayer (salas) fica em server/, com migrações em db/migrations/ e PostgreSQL como banco ([ADR-0004](docs/adr/0004-postgresql-banco-do-projeto.md)). As versões Unity e Godot ficam em ports/, cada uma com seu próprio README; `ports/unity/Backend` é uma cópia legada do backend antigo (Worker/D1), sem evolução.
 
 ## Desenvolvimento web
 
-Use Node.js 22 e Python 3. Na raiz do repositório:
+Use Node.js 22 ou superior. Na raiz do repositório:
 
 ```sh
-node --test scripts/*.test.mjs
-node scripts/build-site.mjs
-python3 -m http.server 8000 --directory dist
+npm ci --ignore-scripts
+node --test scripts/*.test.mjs   # testes do cliente
+bash scripts/pg-test.sh          # testes do backend contra PostgreSQL nativo temporário
+node server/main.mjs             # backend + estáticos (exige DATABASE_URL e PostgreSQL)
 ```
 
-Abra http://localhost:8000 para jogar localmente. O servidor estático permite testar a interface e a regata solo. As salas multiplayer dependem do backend e do banco. O build empacota os recursos, mas não publica o jogo.
+Abra http://localhost:9000 para jogar localmente (ou a porta definida em PORT). As salas multiplayer dependem do backend e do banco.
 
 ## Publicação
 

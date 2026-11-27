@@ -10,5 +10,7 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
+      - run: npm ci --ignore-scripts
       - run: node --test scripts/*.test.mjs
-      - run: node scripts/build-site.mjs
+      # PostgreSQL nativo do runner (cluster temporário via initdb/pg_ctl; sem services: nem container:)
+      - run: bash scripts/pg-test.sh
