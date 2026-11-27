@@ -36,7 +36,9 @@ test("nonce errado, assinatura adulterada e formato inválido são recusados", (
   let wrong = good.nonce + 1;
   while (probe.verify({ ...good, nonce: wrong })) wrong += 1;
   assert.equal(pow.verify({ ...good, nonce: wrong }), false, "nonce que não resolve");
-  assert.equal(pow.verify({ ...good, signature: good.signature.replace(/../, "00") }), false, "assinatura adulterada");
+  // Troca o primeiro byte por um valor garantidamente diferente (sem colisão 1/256).
+  const adulterada = (good.signature.startsWith("00") ? "01" : "00") + good.signature.slice(2);
+  assert.equal(pow.verify({ ...good, signature: adulterada }), false, "assinatura adulterada");
   assert.equal(pow.verify({ ...good, signature: "zz" }), false, "assinatura não-hex");
   assert.equal(pow.verify({ ...good, signature: good.signature.slice(2) }), false, "assinatura curta");
   assert.equal(pow.verify(null), false);

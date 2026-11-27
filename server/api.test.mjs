@@ -8,11 +8,14 @@ import { createPool, migrate } from "./db.mjs";
 import { createApp, clientIp, loginRequiredFrom } from "./main.mjs";
 import { createAuthApi } from "./auth.mjs";
 import { createPow, leadingZeroBits } from "./pow.mjs";
+import { createTestSchema } from "../scripts/testdb.mjs";
 
-let pool, server, base, cookie, openServer, openBase;
+let testdb, pool, server, base, cookie, openServer, openBase;
 
 before(async () => {
-  pool = createPool();
+  // Esquema próprio e aleatório: a suíte pode repetir contra o mesmo banco (sail_ci).
+  testdb = await createTestSchema();
+  pool = testdb.pool;
   await migrate(pool);
   const pow = createPow({ secret: "segredo-api", bits: 2 });
   const auth = createAuthApi(pool, {
@@ -33,7 +36,7 @@ before(async () => {
 after(async () => {
   server.close();
   openServer.close();
-  await pool.end();
+  await testdb.drop();
 });
 
 const post = async (path, body, headers = {}) => {

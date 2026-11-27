@@ -3,11 +3,12 @@
 import { test, before, after } from "node:test";
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
-import { createPool, migrate } from "./db.mjs";
+import { migrate } from "./db.mjs";
 import { createAuthApi, normalizeEmail } from "./auth.mjs";
 import { createPow, leadingZeroBits } from "./pow.mjs";
+import { createTestSchema } from "../scripts/testdb.mjs";
 
-let pool, clock, auth;
+let testdb, pool, clock, auth;
 const sent = []; // e-mails "enviados"
 
 const mail = { send: async message => { sent.push(message); } };
@@ -39,14 +40,16 @@ async function login(email, password = PASS, ip = freshIp()) {
 const sessionToken = result => /sail_session=([A-Za-z0-9_-]{43})/.exec(result.cookie ?? "")[1];
 
 before(async () => {
-  pool = createPool();
+  // Esquema próprio e aleatório: a suíte pode repetir contra o mesmo banco (sail_ci).
+  testdb = await createTestSchema();
+  pool = testdb.pool;
   await migrate(pool);
   clock = Date.now();
   auth = createAuthApi(pool, {
     mail, pow, baseUrl: "https://teste.invalid", scryptParams: { N: 1024, r: 8, p: 1 }, now: () => clock
   });
 });
-after(async () => { await pool.end(); });
+after(async () => { await testdb.drop(); });
 
 test("cadastro cria conta pendente, envia confirmação e o link ativa a conta", async () => {
   const email = freshEmail();

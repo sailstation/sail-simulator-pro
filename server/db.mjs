@@ -9,11 +9,11 @@ export const MIGRATIONS = new URL("../db/migrations/", import.meta.url);
 
 // Aceita os formatos do libpq, inclusive socket Unix percent-encoded:
 // postgresql://%2Fvar%2Frun%2Fpostgresql/sail_prod
-export function createPool(connectionString = process.env.DATABASE_URL) {
+export function createPool(connectionString = process.env.DATABASE_URL, extra = {}) {
   if (!connectionString) {
     throw new Error("Defina DATABASE_URL (ex.: postgresql://%2Fvar%2Frun%2Fpostgresql/sail_prod).");
   }
-  return new pg.Pool({ connectionString, max: 10 });
+  return new pg.Pool({ connectionString, max: 10, ...extra });
 }
 
 // Aplica db/migrations/*.sql em ordem alfabética, uma única vez cada, registrando em _migrations.
