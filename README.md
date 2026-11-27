@@ -14,6 +14,10 @@ python3 -m http.server 8000 --directory dist
 
 Abra http://localhost:8000 para jogar localmente. O servidor estático permite testar a interface e a regata solo. As salas multiplayer dependem do backend e do banco. O build empacota os recursos, mas não publica o jogo.
 
+## Publicação
+
+Produção em https://sail-pro.sailstation.com (segue a `main` testada) e teste em https://sail-test.sailstation.com (último push em PR). O servidor usa PostgreSQL e está descrito em [docs/infra/servidor.md](docs/infra/servidor.md).
+
 ## Contribuição
 
 O repositório canônico é [sailstation/sail-simulator-pro](https://github.com/sailstation/sail-simulator-pro) ([ADR-0002](docs/adr/0002-repositorio-canonico.md)). Issues e PRs são abertos somente nele.

@@ -1,0 +1,7 @@
+[Unit]
+Description=Sail Simulator Pro - sincroniza com o GitHub e publica produção e teste
+After=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/opt/sail/bin/deploy.sh
