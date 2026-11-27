@@ -98,6 +98,8 @@ test("cadastro pendente repetido reenvia a confirmação", async () => {
 
 test("validações: e-mail malformado, senha curta e prova de trabalho inválida", async () => {
   assert.equal((await signup("sem-arroba")).status, 400);
+  assert.equal((await signup("a<b@c.de")).status, 400, "argumento de envelope SMTP (<>) não é e-mail");
+  assert.equal((await signup("a>b@c.de")).status, 400);
   assert.equal((await signup(freshEmail(), "curta")).status, 400);
   const semPow = await auth.handle("signup", { email: freshEmail(), password: PASS, pow: { challenge: "x", signature: "y", nonce: 1 } }, { ip: freshIp() });
   assert.equal(semPow.status, 403);

@@ -94,3 +94,23 @@ echo "ok: migração 0000 não foi reaplicada sobre o banco legado"
 kill "$APP_PID" && wait "$APP_PID" 2>/dev/null || true
 APP_PID=""
 echo "cenário legado concluído"
+
+echo "== cenário: transição sem SMTP (login desligado; sonda do deploy.sh antigo) =="
+# Sem SAIL_ENV=test, sem SMTP_HOST e sem SAIL_LOGIN_REQUIRED o login fica desligado e a
+# release precisa passar no app_healthy do deploy.sh da main: / com sucesso e
+# /api/rooms/sync respondendo exatamente 404. Se isso quebrar, o deploy reverteria a release
+# e a infra do ADR-0005 nunca seria aplicada (ver docs/infra/servidor.md, "Login e e-mail").
+PORT=53932 DATABASE_URL="postgresql://$SOCKET:54329/legado" \
+  node server/main.mjs > "$DIR/main-aberto.log" 2>&1 &
+APP_PID=$!
+for _ in $(seq 1 20); do
+  curl -fsS -m 2 -o /dev/null "http://127.0.0.1:53932/__deploy" 2>/dev/null && break
+  kill -0 "$APP_PID" 2>/dev/null || { echo "server/main.mjs (modo aberto) morreu na partida" >&2; cat "$DIR/main-aberto.log" >&2; exit 1; }
+  sleep 0.5
+done
+curl -fsS -m 5 -o /dev/null "http://127.0.0.1:53932/" || { echo "FALHOU: / sem sessão no modo aberto" >&2; exit 1; }
+CODE=$(curl -s -m 5 -o /dev/null -w '%{http_code}' -X POST -H 'content-type: application/json' \
+  -d '{"code":"AAAA222","token":"x"}' "http://127.0.0.1:53932/api/rooms/sync")
+[ "$CODE" = 404 ] || { echo "FALHOU: sonda do deploy antigo esperava 404, veio $CODE" >&2; exit 1; }
+grep -q "login obrigatório: desligado" "$DIR/main-aberto.log" || { echo "FALHOU: aviso de login desligado ausente no log" >&2; exit 1; }
+echo "ok: modo aberto passa na sonda do deploy antigo (200 em /, 404 em /api/rooms/sync)"

@@ -46,9 +46,12 @@ healthy() { # ambiente host porta-https porta-app
   if [ "$1" = test ]; then curl -sS -m 5 -o /dev/null --resolve "$2:$3:127.0.0.1" "https://$2:$3/__deploy"; return; fi
   curl -fsS -m 5 -o /dev/null --resolve "$2:$3:127.0.0.1" "https://$2:$3/__deploy" || return 1
   curl -fsS -m 5 -o /dev/null "http://127.0.0.1:$4/" || return 1
-  # A API precisa chegar ao banco: sala inexistente responde 404 (503 indica banco fora).
-  [ "$(curl -s -m 5 -o /dev/null -w '%{http_code}' -X POST -H 'content-type: application/json' \
-      -d '{"code":"AAAA222","token":"x"}' "http://127.0.0.1:$4/api/rooms/sync")" = 404 ]
+  # A API precisa chegar ao banco: sem sessão, sala inexistente responde 404 (login desligado
+  # ou release antiga) ou 401 (login ligado, ADR-0005); 503 indica banco fora.
+  local code
+  code=$(curl -s -m 5 -o /dev/null -w '%{http_code}' -X POST -H 'content-type: application/json' \
+      -d '{"code":"AAAA222","token":"x"}' "http://127.0.0.1:$4/api/rooms/sync")
+  [ "$code" = 404 ] || [ "$code" = 401 ]
 }
 
 # 4. Instala (sem disparar outro deploy).

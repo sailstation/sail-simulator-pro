@@ -22,7 +22,9 @@ export const LIMITS = {
   recoverIp: { max: 10, windowMs: 60 * MINUTE, blockMs: 60 * MINUTE, maxBlockMs: 60 * MINUTE }
 };
 
-const EMAIL = /^[^\s@]{1,64}@[^\s@]{1,190}\.[^\s@]{2,24}$/; // validação simples, sem RFC completa
+// Validação simples, sem RFC completa; "<" e ">" ficam de fora para o endereço do envelope
+// SMTP (mail.mjs, bareAddress) nunca divergir do cabeçalho To.
+const EMAIL = /^[^\s@<>]{1,64}@[^\s@<>]{1,190}\.[^\s@<>]{2,24}$/;
 const PASSWORD_MIN = 10;
 const PASSWORD_MAX = 128;
 

@@ -41,6 +41,12 @@ install -m 644 serve.mjs package.json /opt/sail/bin/
 for f in deploy.sh infra-apply.sh start.sh release-format.sh; do install -m 755 "$f" "/opt/sail/bin/.$f.new" && mv -f "/opt/sail/bin/.$f.new" "/opt/sail/bin/$f"; done
 install -m 644 postgres/*.sql /opt/sail/schema/
 install -m 644 env/prod.env env/test.env /opt/sail/
+# Segredos do login (SAIL_POW_SECRET, SMTP_*): a unit lê /opt/sail/<ambiente>.secrets.env
+# (EnvironmentFile opcional). Cria vazio se não existir; o conteúdo é preenchido à mão no
+# servidor e nunca é sobrescrito pelo GitOps. Sem SMTP_HOST nele, o login fica desligado.
+for e in prod test; do
+  [ -f "/opt/sail/$e.secrets.env" ] || install -m 600 -o root -g root /dev/null "/opt/sail/$e.secrets.env"
+done
 install -m 644 systemd/sail@.service systemd/sail-deploy.service systemd/sail-deploy.timer /etc/systemd/system/
 install -m 644 caddy/Caddyfile /etc/caddy/Caddyfile
 (cd /opt/sail/bin && npm install --silent --no-fund --no-audit --omit=dev)

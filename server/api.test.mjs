@@ -5,11 +5,11 @@ import assert from "node:assert/strict";
 import { once } from "node:events";
 import { createHash } from "node:crypto";
 import { createPool, migrate } from "./db.mjs";
-import { createApp } from "./main.mjs";
+import { createApp, clientIp, loginRequiredFrom } from "./main.mjs";
 import { createAuthApi } from "./auth.mjs";
 import { createPow, leadingZeroBits } from "./pow.mjs";
 
-let pool, server, base, cookie;
+let pool, server, base, cookie, openServer, openBase;
 
 before(async () => {
   pool = createPool();
@@ -20,13 +20,19 @@ before(async () => {
   });
   server = createApp({ pool, deployInfo: '{"env":"teste"}', auth });
   server.listen(0, "127.0.0.1");
-  await once(server, "listening");
+  // Segunda instância com o login desligado (SAIL_LOGIN_REQUIRED=0 ou sem SMTP), para os
+  // testes do modo aberto — o modo em que a release sobe na transição do ADR-0005.
+  openServer = createApp({ pool, deployInfo: '{"env":"teste"}', auth, loginRequired: false });
+  openServer.listen(0, "127.0.0.1");
+  await Promise.all([once(server, "listening"), once(openServer, "listening")]);
   base = `http://127.0.0.1:${server.address().port}`;
+  openBase = `http://127.0.0.1:${openServer.address().port}`;
   cookie = await createAccount("anfitria@exemplo.com");
 });
 
 after(async () => {
   server.close();
+  openServer.close();
   await pool.end();
 });
 
@@ -264,8 +270,66 @@ test("cabeçalhos de segurança em todas as respostas", async () => {
     assert.equal(r.headers.get("x-content-type-options"), "nosniff");
     assert.equal(r.headers.get("x-frame-options"), "DENY");
     assert.equal(r.headers.get("referrer-policy"), "same-origin");
+    assert.equal(r.headers.get("strict-transport-security"), "max-age=15552000");
     assert.match(r.headers.get("content-security-policy"), /default-src 'self'/);
   }
+});
+
+test("login desligado: site e salas abrem sem sessão, como antes do ADR-0005", async () => {
+  // A sonda exata do app_healthy do deploy.sh da main na transição: / com sucesso e
+  // /api/rooms/sync respondendo 404 (não 401), senão o deploy reverteria a release.
+  const raiz = await fetch(`${openBase}/`);
+  assert.equal(raiz.status, 200);
+  assert.match(raiz.headers.get("cache-control"), /^private/);
+  const [syncStatus] = await (async () => {
+    const r = await fetch(`${openBase}/api/rooms/sync`, { method: "POST",
+      headers: { "content-type": "application/json" }, body: '{"code":"AAAA222","token":"x"}' });
+    return [r.status];
+  })();
+  assert.equal(syncStatus, 404, "sonda do deploy antigo precisa de 404");
+  // Salas funcionam sem cookie e a tela de entrada continua acessível, sem bloquear nada.
+  const [createStatus, room] = await (async () => {
+    const r = await fetch(`${openBase}/api/rooms/create`, { method: "POST",
+      headers: { "content-type": "application/json" }, body: JSON.stringify({ name: "Aberta", settings }) });
+    return [r.status, await r.json()];
+  })();
+  assert.equal(createStatus, 200);
+  assert.match(room.code, /^[A-Z2-9]{7}$/);
+  assert.equal((await fetch(`${openBase}/login.html`)).status, 200);
+  const challenge = await fetch(`${openBase}/api/auth/challenge`, { method: "POST",
+    headers: { "content-type": "application/json" }, body: "{}" });
+  assert.equal(challenge.status, 200, "API de contas continua no ar com o login desligado");
+});
+
+test("loginRequiredFrom: teste liga sempre; fora dele, a variável manda; padrão segue o SMTP", () => {
+  assert.equal(loginRequiredFrom({ SAIL_ENV: "test" }), true, "ambiente de teste liga sempre");
+  assert.equal(loginRequiredFrom({ SAIL_ENV: "test", SAIL_LOGIN_REQUIRED: "0" }), true, "nem a variável desliga o teste");
+  assert.equal(loginRequiredFrom({ SAIL_ENV: "test", SMTP_HOST: "" }), true, "teste liga mesmo sem SMTP");
+  assert.equal(loginRequiredFrom({}), false, "sem SMTP, desligado");
+  assert.equal(loginRequiredFrom({ SMTP_HOST: "smtp.coop.br" }), true, "com SMTP, ligado");
+  assert.equal(loginRequiredFrom({ SAIL_LOGIN_REQUIRED: "1" }), true);
+  assert.equal(loginRequiredFrom({ SAIL_LOGIN_REQUIRED: "0", SMTP_HOST: "smtp.coop.br" }), false, "variável vence o SMTP");
+  for (const off of ["0", "false", "off", "no", "OFF"]) {
+    assert.equal(loginRequiredFrom({ SAIL_LOGIN_REQUIRED: off }), false, off);
+  }
+});
+
+test("clientIp: X-Forwarded-For só é confiável vindo do proxy local, e vale o último salto", () => {
+  const req = (peer, xff) => ({ socket: { remoteAddress: peer }, headers: xff === undefined ? {} : { "x-forwarded-for": xff } });
+  assert.equal(clientIp(req("127.0.0.1", "203.0.113.9")), "203.0.113.9", "Caddy repassou o cliente");
+  assert.equal(clientIp(req("127.0.0.1", "198.51.100.7, 203.0.113.9")), "203.0.113.9",
+    "cliente forjou o primeiro valor; o Caddy acrescentou o real no fim");
+  assert.equal(clientIp(req("::1", "203.0.113.9")), "203.0.113.9");
+  assert.equal(clientIp(req("::ffff:127.0.0.1", "203.0.113.9")), "203.0.113.9");
+  assert.equal(clientIp(req("127.0.0.1")), "127.0.0.1", "sem cabeçalho, vale o peer");
+  assert.equal(clientIp(req("127.0.0.1", " , ")), "127.0.0.1", "cabeçalho vazio cai no peer");
+  assert.equal(clientIp(req("10.0.0.5", "203.0.113.9")), "10.0.0.5", "peer que não é proxy local não é confiável");
+});
+
+test("Origin malformado é recusado com 403, não com erro interno", async () => {
+  const r = await fetch(`${base}/api/rooms/create`, { method: "POST",
+    headers: { "content-type": "application/json", origin: "///nao-e-url" }, body: "{}" });
+  assert.equal(r.status, 403);
 });
 
 test("logout encerra o acesso ao site e à API", async () => {
