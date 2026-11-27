@@ -22,6 +22,7 @@ Decisão:
   - Teste publica o último push em PR de branch deste repositório, mesmo com testes falhando. PRs de forks externos não são executados no servidor.
 - Infraestrutura como código (GitOps): mudanças em `deploy/` que chegam à `main` testada são aplicadas sozinhas por `deploy/infra-apply.sh`, que valida, faz backup, instala, verifica a saúde e reverte automaticamente em caso de falha. A produção também volta à release anterior se não ficar saudável depois de publicar. PRs nunca aplicam infraestrutura.
 - Código do repositório é testado e construído como usuário sem privilégios, sem rede e com sistema de arquivos somente leitura. Produção e teste rodam com usuários e bancos diferentes.
+- Docker e contêineres são proibidos no projeto (desenvolvimento, testes, CI e servidor); PostgreSQL e demais serviços rodam nativos. Definição da equipe (27/11/2026, aceite do responsável pendente).
 
 Consequências:
 - O código do jogo continua compatível com Cloudflare. A paridade entre D1 e PostgreSQL depende do adaptador e do esquema duplicado.
