@@ -2,6 +2,13 @@
 
 Vale para Codex, Claude e qualquer outro agente ou pessoa que trabalhe neste projeto. Leia antes de alterar qualquer arquivo.
 
+## Antes de começar (obrigatório)
+1. Leia este arquivo inteiro e o [README](README.md).
+2. Leia o [índice de ADRs](docs/adr/README.md) e todos os ADRs aceitos.
+3. Leia a issue que você vai resolver, com os comentários. Leia também as issues de ADR propostas que ela cita (label `adr`, épico #19).
+4. Se a mudança toca o servidor ou `deploy/`, leia `docs/infra/servidor.md`.
+5. Se algo não estiver decidido em um ADR aceito, não decida sozinho: pergunte ou proponha um ADR.
+
 ## Repositório
 - O repositório canônico é **sailstation/sail-simulator-pro** ([ADR-0002](docs/adr/0002-repositorio-canonico.md)). Abra issues, branches e PRs somente nele. Com `gh`, use `-R sailstation/sail-simulator-pro`.
 - gvestphal-glitch/sail-simulator-pro é o `upstream` histórico. Não abra nada lá.
