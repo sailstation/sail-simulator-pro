@@ -1,0 +1,9 @@
+{
+  "name": "sail-simulator-pro-host",
+  "private": true,
+  "description": "Hospedagem do backend do Sail Simulator Pro em Node com PostgreSQL",
+  "type": "module",
+  "dependencies": {
+    "pg": "^8.23.1"
+  }
+}

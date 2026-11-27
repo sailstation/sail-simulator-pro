@@ -14,6 +14,10 @@ python3 -m http.server 8000 --directory dist
 
 Abra http://localhost:8000 para jogar localmente. O servidor estático permite testar a interface e a regata solo. As salas multiplayer dependem do backend e do banco. O build empacota os recursos, mas não publica o jogo.
 
+## Publicação
+
+Produção em https://sail-pro.sailstation.com (segue a `main` testada) e teste em https://sail-test.sailstation.com (último push em PR). O servidor usa PostgreSQL e está descrito em [docs/infra/servidor.md](docs/infra/servidor.md).
+
 ## Contribuição
 
 Siga [ADR-0001](docs/adr/0001-fluxo.md). Abra uma issue com objetivo e critérios de aceite. Registre a decisão antes de implementar. Trabalhe em uma branch por issue e vincule seu PR usando Closes #N. A próxima feature começa após o encerramento do PR da anterior.

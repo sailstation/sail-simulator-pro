@@ -1,0 +1,48 @@
+#!/bin/bash
+# Instala ou atualiza a hospedagem do Sail Simulator Pro em Debian 13.
+# Uso, como root, a partir de um clone do repositório: deploy/install.sh
+# Idempotente: pode ser executado de novo após mudanças em deploy/.
+set -euo pipefail
+cd "$(dirname "$0")"
+NODE_MAJOR=24
+export DEBIAN_FRONTEND=noninteractive
+
+apt-get update -qq
+apt-get install -y -qq git caddy curl xz-utils ca-certificates jq postgresql >/dev/null
+systemctl enable -q --now postgresql
+
+if ! /opt/node/bin/node --version 2>/dev/null | grep -q "^v$NODE_MAJOR\."; then
+  V=$(curl -fsSL https://nodejs.org/dist/index.json | jq -r "[.[]|select(.version|startswith(\"v$NODE_MAJOR.\"))][0].version")
+  T=$(mktemp -d); trap 'rm -rf "$T"' EXIT
+  curl -fsSL -o "$T/node.tar.xz" "https://nodejs.org/dist/$V/node-$V-linux-x64.tar.xz"
+  curl -fsSL "https://nodejs.org/dist/$V/SHASUMS256.txt" | grep " node-$V-linux-x64.tar.xz$" | awk '{print $1"  '"$T"'/node.tar.xz"}' | sha256sum -c -
+  rm -rf /opt/node && mkdir -p /opt/node && tar -xJf "$T/node.tar.xz" -C /opt/node --strip-components=1
+fi
+export PATH=/opt/node/bin:$PATH
+
+for u in sail-build sail-prod sail-test; do id "$u" >/dev/null 2>&1 || useradd --system --no-create-home --shell /usr/sbin/nologin "$u"; done
+mkdir -p /opt/sail/{bin,state,releases,prod,test,schema}
+
+for e in prod test; do
+  sudo -u postgres psql -qtAc "SELECT 1 FROM pg_roles WHERE rolname='sail-$e'" | grep -q 1 || sudo -u postgres psql -qc "CREATE ROLE \"sail-$e\" LOGIN"
+  sudo -u postgres psql -qtAc "SELECT 1 FROM pg_database WHERE datname='sail_$e'" | grep -q 1 || sudo -u postgres createdb -O "sail-$e" "sail_$e"
+  sudo -u postgres psql -qc "REVOKE ALL ON DATABASE sail_$e FROM PUBLIC"
+done
+
+install -m 644 serve.mjs package.json /opt/sail/bin/
+install -m 755 deploy.sh /opt/sail/bin/
+install -m 644 postgres/*.sql /opt/sail/schema/
+install -m 644 env/prod.env env/test.env /opt/sail/
+install -m 644 systemd/sail@.service systemd/sail-deploy.service systemd/sail-deploy.timer /etc/systemd/system/
+install -m 644 caddy/Caddyfile /etc/caddy/Caddyfile
+(cd /opt/sail/bin && npm install --silent --no-fund --no-audit --omit=dev)
+chmod -R a+rX /opt/sail/bin /opt/sail/schema
+
+systemctl daemon-reload
+systemctl enable -q sail@prod sail@test
+/opt/sail/bin/deploy.sh
+systemctl restart sail@prod sail@test
+caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile >/dev/null
+systemctl reload-or-restart caddy
+systemctl enable -q --now sail-deploy.timer
+echo "Instalação concluída."

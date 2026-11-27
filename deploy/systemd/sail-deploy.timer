@@ -1,0 +1,10 @@
+[Unit]
+Description=Sail Simulator Pro - verificação do GitHub a cada minuto
+
+[Timer]
+OnBootSec=30s
+OnUnitActiveSec=60s
+AccuracySec=5s
+
+[Install]
+WantedBy=timers.target

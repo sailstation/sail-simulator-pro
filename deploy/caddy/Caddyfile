@@ -1,0 +1,27 @@
+# Sail Simulator Pro. O HAProxy da borda (Rudder) encaminha:
+#   sail-pro:  80 -> :8000 (HTTP)  e 443 (SNI, passthrough) -> :443
+#   sail-test: 80 -> :8001 (HTTP)  e 443 (SNI, passthrough) -> :8443
+{
+	auto_https disable_redirects
+	http_port 8000
+	https_port 443
+}
+
+https://sail-pro.sailstation.com {
+	encode zstd gzip
+	reverse_proxy 127.0.0.1:9000
+}
+
+http://sail-pro.sailstation.com:8000 {
+	redir https://sail-pro.sailstation.com{uri} 308
+}
+
+https://sail-test.sailstation.com:8443 {
+	encode zstd gzip
+	header X-Robots-Tag "noindex, nofollow"
+	reverse_proxy 127.0.0.1:9001
+}
+
+http://sail-test.sailstation.com:8001 {
+	redir https://sail-test.sailstation.com{uri} 308
+}

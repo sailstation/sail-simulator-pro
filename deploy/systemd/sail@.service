@@ -1,0 +1,22 @@
+[Unit]
+Description=Sail Simulator Pro (%i)
+After=network-online.target postgresql.service
+Wants=network-online.target postgresql.service
+
+[Service]
+User=sail-%i
+Group=sail-%i
+EnvironmentFile=/opt/sail/%i.env
+Environment=SAIL_APP=/opt/sail/%i/current SAIL_ENV=%i
+ExecStart=/opt/node/bin/node /opt/sail/bin/serve.mjs
+Restart=always
+RestartSec=2
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+ReadWritePaths=/run/postgresql
+MemoryMax=1G
+
+[Install]
+WantedBy=multi-user.target
