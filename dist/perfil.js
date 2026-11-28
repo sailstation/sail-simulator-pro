@@ -98,9 +98,30 @@ el("sugestao-enviar").addEventListener("click", async () => {
   } catch (error) { message(error.message || "Algo deu errado. Tente de novo.", true); }
 });
 
+// Reencoda a foto no navegador antes do envio (ADR-0006): o canvas grava a orientação EXIF
+// nos próprios pixels — o servidor remove os metadados e a orientação se perderia junto.
+// Sem suporte a canvas/createImageBitmap, envia o arquivo original (o servidor ainda limpa
+// os metadados; só a orientação pode se perder).
+async function normalizedPhoto(file) {
+  try {
+    const bitmap = await createImageBitmap(file, { imageOrientation: "from-image" });
+    const canvas = document.createElement("canvas");
+    canvas.width = bitmap.width;
+    canvas.height = bitmap.height;
+    canvas.getContext("2d").drawImage(bitmap, 0, 0);
+    bitmap.close();
+    const type = file.type === "image/png" ? "image/png" : "image/jpeg";
+    const blob = await new Promise(resolve => canvas.toBlob(resolve, type, 0.92));
+    return blob || file;
+  } catch {
+    return file;
+  }
+}
+
 async function uploadPhoto(file) {
+  const photo = await normalizedPhoto(file);
   const response = await fetch("/api/profile/photo", {
-    method: "POST", headers: { "Content-Type": file.type }, body: file
+    method: "POST", headers: { "Content-Type": photo.type || file.type }, body: photo
   });
   const data = await response.json().catch(() => ({}));
   if (!response.ok) throw new Error(data.error || "Não foi possível enviar a foto.");

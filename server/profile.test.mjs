@@ -10,15 +10,18 @@ import { createAuthApi, LIMITS } from "./auth.mjs";
 import { createPow, leadingZeroBits } from "./pow.mjs";
 import { COUNTRY_CODES } from "./countries.mjs";
 import { createTestSchema } from "../scripts/testdb.mjs";
+import { jpeg, png, webp, FAKE_GPS } from "../scripts/test-images.mjs";
 
 let testdb, pool, server, base, openServer, openBase;
 
 // PNG 1x1 real (transparente), para uploads que passam na verificação dos bytes iniciais.
+// JPEG e WebP sintéticos estruturalmente válidos vêm de scripts/test-images.mjs (ADR-0006:
+// o upload agora confere a estrutura inteira para remover metadados, não só os bytes iniciais).
 const PNG = Buffer.from(
   "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==",
   "base64");
-const JPEG = Buffer.concat([Buffer.from([0xff, 0xd8, 0xff, 0xe0]), Buffer.alloc(16)]);
-const WEBP = Buffer.concat([Buffer.from("RIFF"), Buffer.alloc(4), Buffer.from("WEBP"), Buffer.alloc(8)]);
+const JPEG = jpeg({ metadata: false });
+const WEBP = webp({ metadata: false, vp8x: false });
 
 before(async () => {
   testdb = await createTestSchema();
@@ -164,6 +167,33 @@ test("upload de foto valida formato pelos bytes, tamanho e ordem (perfil antes d
   assert.equal((await upload(cookie, WEBP, "image/webp")).status, 200, "webp pelos bytes");
   const foto = await fetch(`${base}/api/profile/photo`, { headers: { cookie } });
   assert.equal(foto.headers.get("content-type"), "image/webp", "a última foto vale");
+});
+
+test("upload remove metadados (EXIF/GPS, XMP, IPTC) antes de gravar; malformado dá 400", async () => {
+  const cookie = await createAccount("metadados");
+  await profile("save", { name: "Sem GPS", country: "BR", clubId: "seed-icrj" }, cookie);
+  const servida = async () => Buffer.from(await (await fetch(`${base}/api/profile/photo`, { headers: { cookie } })).arrayBuffer());
+
+  const comExif = jpeg();
+  assert.ok(comExif.includes(Buffer.from(FAKE_GPS)), "a foto de teste traz GPS no EXIF");
+  assert.equal((await upload(cookie, comExif, "image/jpeg")).status, 200);
+  const jpegServido = await servida();
+  assert.ok(!jpegServido.includes(Buffer.from(FAKE_GPS)), "o GPS não é servido");
+  assert.ok(jpegServido.includes(Buffer.from("ICC_PROFILE")), "o perfil ICC continua");
+
+  assert.equal((await upload(cookie, png(), "image/png")).status, 200);
+  assert.ok(!(await servida()).includes(Buffer.from("Author")), "tEXt do PNG removido");
+
+  assert.equal((await upload(cookie, webp(), "image/webp")).status, 200);
+  const webpServido = await servida();
+  assert.ok(!webpServido.includes(Buffer.from(FAKE_GPS)) && !webpServido.includes(Buffer.from("EXIF")),
+    "EXIF do WebP removido");
+
+  // Estrutura inválida (só os bytes iniciais conferem) é recusa 400, nunca 500.
+  const truncado = jpeg().subarray(0, 9);
+  assert.equal((await upload(cookie, truncado, "image/jpeg")).status, 400);
+  assert.equal((await upload(cookie, PNG.subarray(0, 30), "image/png")).status, 400);
+  assert.equal((await upload(cookie, Buffer.concat([WEBP, Buffer.from("lixo")]), "image/webp")).status, 400);
 });
 
 test("gate: perfil incompleto bloqueia salas (403) e redireciona os estáticos para /perfil.html", async () => {

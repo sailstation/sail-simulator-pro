@@ -4,6 +4,7 @@
 // jogadores ficam "pending" e visíveis somente para o autor até a moderação (por SQL, por ora).
 import { randomUUID } from "node:crypto";
 import { normalizeCountry, COUNTRY_CODES } from "./countries.mjs";
+import { stripImageMetadata, MalformedImageError } from "./image-metadata.mjs";
 
 const PHOTO_MAX = 2 * 1024 * 1024;
 const PHOTO_TYPES = new Set(["image/jpeg", "image/png", "image/webp"]);
@@ -106,9 +107,20 @@ export function createProfileApi(pool, { now = () => Date.now() } = {}) {
     if (detected === null || detected !== contentType) {
       return failure("O conteúdo não confere com o formato declarado. Envie um JPEG, PNG ou WebP válido.", 400);
     }
+    // Metadados (EXIF/GPS, XMP, IPTC, comentários) saem antes de gravar: a foto pode ter
+    // vindo direto do celular. Estrutura inválida é recusa 400, nunca exceção 500.
+    let clean;
+    try {
+      clean = stripImageMetadata(bytes, contentType);
+    } catch (error) {
+      if (error instanceof MalformedImageError) {
+        return failure("A imagem está corrompida. Exporte a foto de novo e tente outra vez.", 400);
+      }
+      throw error;
+    }
     const { rowCount } = await pool.query(
       "UPDATE profiles SET photo=$2, photo_type=$3, photo_at=$4, updated=$4 WHERE user_id=$1",
-      [user.id, bytes, contentType, now()]);
+      [user.id, clean, contentType, now()]);
     if (!rowCount) return failure("Salve o perfil antes de enviar a foto.", 409);
     return ok({ ok: true, photoAt: now(), complete: await complete(user.id) });
   }

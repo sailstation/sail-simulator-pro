@@ -81,7 +81,7 @@ O `deploy/e2e.mjs` cobre o fluxo completo (cadastro com prova de trabalho, confi
 
 Com o login ligado, quem entra sem perfil completo (foto, nome de exibição, país e clube) é redirecionado para `/perfil.html` e a API de salas responde 403 até completar. A API fica em `/api/profile/*` e sempre exige sessão — com o login desligado ela responde 401 e o site funciona como antes, sem exigir perfil.
 
-- **Fotos** ficam no PostgreSQL (`bytea`, até 2 MB, JPEG/PNG/WebP conferidos pelos bytes iniciais) e saem só com sessão, com `Content-Type` gravado e `nosniff`. Não há diretório de uploads nem variável nova.
+- **Fotos** ficam no PostgreSQL (`bytea`, até 2 MB, JPEG/PNG/WebP conferidos pela estrutura completa do arquivo) e saem só com sessão, com `Content-Type` gravado e `nosniff`. Metadados (EXIF/GPS, XMP, IPTC, comentários) são removidos no servidor antes de gravar, em JavaScript puro; foto malformada recebe 400. Não há diretório de uploads nem variável nova.
 - **Clubes**: a tabela `clubs` nasce com uma semente de clubes brasileiros marcados "a verificar" (`verified=false`). Sugestões de jogadores entram como `pending` e só aparecem para o autor.
 - **Moderação (manual, por enquanto)**:
 
