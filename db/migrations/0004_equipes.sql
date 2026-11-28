@@ -43,6 +43,12 @@ CREATE INDEX team_invites_invitee ON team_invites(invitee) WHERE status = 'pendi
 CREATE INDEX team_invites_email ON team_invites(invitee_email) WHERE status = 'pending';
 CREATE INDEX team_invites_team ON team_invites(team_id, status);
 CREATE INDEX team_invites_sender ON team_invites(invited_by, created);
+-- Um convite pendente por pessoa/e-mail por equipe, garantido pelo banco (a checagem da
+-- aplicação e o índice disputam a mesma corrida).
+CREATE UNIQUE INDEX team_invites_one_pending_invitee ON team_invites(team_id, invitee)
+  WHERE status = 'pending' AND invitee IS NOT NULL;
+CREATE UNIQUE INDEX team_invites_one_pending_email ON team_invites(team_id, invitee_email)
+  WHERE status = 'pending' AND invitee_email IS NOT NULL;
 -- Chat da equipe: id BIGSERIAL é o cursor do histórico (before) e do polling (after).
 -- Remoção é tombstone (deleted preenchido e corpo esvaziado) para os clientes removerem a
 -- mensagem no próximo polling; a denúncia guarda a cópia do texto.
@@ -59,7 +65,7 @@ CREATE INDEX team_messages_author ON team_messages(user_id, created);
 CREATE TABLE team_message_reports (
   id TEXT PRIMARY KEY,
   message_id BIGINT NOT NULL,             -- sem FK: a mensagem pode virar tombstone ou sumir
-  team_id TEXT NOT NULL REFERENCES teams(id) ON DELETE CASCADE,
+  team_id TEXT NOT NULL,                  -- sem FK: a denúncia sobrevive à equipe apagada (evidência)
   reporter TEXT REFERENCES users(id) ON DELETE SET NULL,
   reported_user TEXT,                     -- autor no momento da denúncia (sem FK, como message_id)
   excerpt TEXT NOT NULL,                  -- cópia do texto denunciado

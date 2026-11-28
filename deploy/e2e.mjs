@@ -110,7 +110,11 @@ const [, chatTrip] = await call("teams", "chat", { teamId: eq.team.id }, tripula
 ok(chatTrip.messages.some(m => m.body === "Boa tarde, tripulação!" && m.user.name === "Piloto E2E"), "chat entrega a mensagem com o nome da autora");
 ok((await call("teams", "chat", { teamId: eq.team.id, after: chatTrip.messages[chatTrip.messages.length - 1].id }, tripulante))[1].messages.length === 0, "polling sem novidades");
 ok((await call("teams", "report", { teamId: eq.team.id, messageId: msg.message.id, reason: "teste do e2e" }, tripulante))[0] === 200, "denunciar mensagem");
+const [, antesDoApagar] = await call("teams", "chat", { teamId: eq.team.id }, tripulante);
 ok((await call("teams", "delete-message", { teamId: eq.team.id, messageId: msg.message.id }))[0] === 200, "capitã apaga a própria mensagem");
+const [, depoisDoApagar] = await call("teams", "chat",
+  { teamId: eq.team.id, after: chatTrip.messages[chatTrip.messages.length - 1].id, since: antesDoApagar.now }, tripulante);
+ok(depoisDoApagar.messages.some(m => m.id === msg.message.id && m.deleted && m.body === ""), "tombstone chega no polling de quem já tinha a mensagem");
 ok((await call("teams", "leave", { teamId: eq.team.id }, tripulante))[0] === 200, "membro sai da equipe");
 ok((await call("teams", "chat", { teamId: eq.team.id }, tripulante))[0] === 404, "quem saiu não lê mais o chat");
 ok((await call("teams", "delete", { teamId: eq.team.id }))[0] === 200, "capitã apaga a equipe");

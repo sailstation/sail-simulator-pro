@@ -9,6 +9,7 @@ let selecionada = null;     // id da equipe aberta
 let mensagens = [];         // histórico carregado, em ordem
 let temAnteriores = false;
 let carregandoChat = false;
+let relogio = 0;            // "now" do servidor na última consulta de chat (cursor since)
 
 function message(text, isError = false) {
   const box = el("mensagem");
@@ -77,8 +78,8 @@ async function responder(inviteId, acao) {
   message("");
   const [ok, data] = await api(acao, { inviteId });
   if (!ok) { message(data.error, true); return; }
-  if (acao === "accept") selecionada = data.teamId;
   await carregar();
+  if (acao === "accept") trocarPara(data.teamId);
 }
 
 function renderEquipes() {
@@ -170,15 +171,23 @@ async function agir(acao, corpo, sucesso) {
   await carregar();
 }
 
-function selecionar(teamId) {
-  if (selecionada === teamId) return;
+// Único caminho de troca de equipe: zera o chat (mensagens, cursores e tela) antes de abrir
+// a nova — sem isso, mensagens de uma equipe apareceriam na outra.
+function trocarPara(teamId) {
   selecionada = teamId;
   mensagens = [];
   temAnteriores = false;
+  relogio = 0;
   el("chat-mensagens").replaceChildren();
+  el("chat-anteriores").hidden = true;
   renderEquipes();
   renderDetalhe();
   carregarChatInicial().catch(() => {});
+}
+
+function selecionar(teamId) {
+  if (selecionada === teamId) return;
+  trocarPara(teamId);
 }
 
 // --- chat (polling com after; histórico com before) ---------------------------------------------
@@ -209,7 +218,8 @@ function renderMensagem(msg) {
       apagar.textContent = "apagar";
       apagar.addEventListener("click", async () => {
         const [ok, data] = await api("delete-message", { teamId: team.id, messageId: msg.id });
-        if (!ok) message(data.error, true);
+        if (!ok) { message(data.error, true); return; }
+        aplicarLote([data.message]); // vira tombstone também na própria tela
       });
       acoes.append(apagar);
     }
@@ -231,7 +241,7 @@ function renderMensagem(msg) {
 }
 
 // Aplica o lote na tela: novas entram no fim; tombstones atualizam quem já estava lá.
-function aplicarLote(lote, { prepend = false } = {}) {
+function aplicarLote(lote) {
   const porId = new Map(mensagens.map((msg, i) => [msg.id, i]));
   for (const msg of lote) {
     const existente = porId.get(msg.id);
@@ -250,27 +260,32 @@ function aplicarLote(lote, { prepend = false } = {}) {
     lista.append(renderMensagem(msg));
     if (noFim) lista.scrollTop = lista.scrollHeight;
   }
-  if (prepend) mensagens.sort((a, b) => a.id - b.id);
 }
 
 async function carregarChatInicial() {
-  const team = teamById(selecionada);
-  if (!team) return;
-  const [ok, data] = await api("chat", { teamId: team.id });
-  if (!ok) { message(data.error, true); return; }
-  mensagens = [];
-  el("chat-mensagens").replaceChildren();
-  aplicarLote(data.messages);
-  temAnteriores = data.hasMore;
-  el("chat-anteriores").hidden = !temAnteriores;
-  const lista = el("chat-mensagens");
-  lista.scrollTop = lista.scrollHeight;
+  const teamId = selecionada;
+  if (!teamId || carregandoChat) return;
+  carregandoChat = true;
+  try {
+    const [ok, data] = await api("chat", { teamId });
+    if (selecionada !== teamId) return; // trocou de equipe com a resposta em voo: descarta
+    if (!ok) { message(data.error, true); return; }
+    mensagens = [];
+    el("chat-mensagens").replaceChildren();
+    aplicarLote(data.messages);
+    relogio = data.now;
+    temAnteriores = data.hasMore;
+    el("chat-anteriores").hidden = !temAnteriores;
+    const lista = el("chat-mensagens");
+    lista.scrollTop = lista.scrollHeight;
+  } finally { carregandoChat = false; }
 }
 
 async function carregarAnteriores() {
-  const team = teamById(selecionada);
-  if (!team || !mensagens.length) return;
-  const [ok, data] = await api("chat", { teamId: team.id, before: mensagens[0].id });
+  const teamId = selecionada;
+  if (!teamId || !mensagens.length) return;
+  const [ok, data] = await api("chat", { teamId, before: mensagens[0].id });
+  if (selecionada !== teamId) return;
   if (!ok) { message(data.error, true); return; }
   const lista = el("chat-mensagens");
   const altura = lista.scrollHeight;
@@ -285,12 +300,15 @@ async function carregarAnteriores() {
 el("chat-anteriores").addEventListener("click", () => carregarAnteriores().catch(() => {}));
 
 async function polling() {
-  if (carregandoChat || document.hidden || !selecionada || !teamById(selecionada)) return;
+  const teamId = selecionada;
+  if (carregandoChat || document.hidden || !teamId || !teamById(teamId)) return;
   carregandoChat = true;
   try {
     const ultimo = mensagens.length ? mensagens[mensagens.length - 1].id : 0;
-    const [ok, data] = await api("chat", { teamId: selecionada, after: ultimo });
-    if (ok) aplicarLote(data.messages);
+    const [ok, data] = await api("chat", { teamId, after: ultimo, since: relogio });
+    if (!ok || selecionada !== teamId) return;
+    relogio = data.now;
+    aplicarLote(data.messages);
   } catch { /* rede instável: a próxima rodada tenta de novo */ }
   finally { carregandoChat = false; }
 }
@@ -298,12 +316,15 @@ setInterval(() => polling().catch(() => {}), 3000);
 
 el("form-mensagem").addEventListener("submit", async event => {
   event.preventDefault();
+  const teamId = selecionada;
+  if (!teamId) return;
   const campo = el("mensagem-texto");
   const body = campo.value;
   if (!body.trim()) return;
-  const [ok, data] = await api("send", { teamId: selecionada, body });
+  const [ok, data] = await api("send", { teamId, body });
   if (!ok) { message(data.error, true); return; }
   campo.value = "";
+  if (selecionada !== teamId) return;
   aplicarLote([data.message]);
   el("chat-mensagens").scrollTop = el("chat-mensagens").scrollHeight;
 });
@@ -368,9 +389,9 @@ el("form-criar").addEventListener("submit", async event => {
   if (!ok) { message(data.error, true); return; }
   el("equipe-nome").value = "";
   el("equipe-sigla").value = "";
-  selecionada = data.team.id;
   message(`Equipe ${data.team.name} criada. Você é a capitã.`);
   await carregar();
+  trocarPara(data.team.id);
 });
 
 // --- carga ---------------------------------------------------------------------------------------
@@ -392,8 +413,11 @@ async function carregar() {
   const [ok, data] = await api("get");
   if (!ok) { message(data.error, true); return; }
   estado = data;
-  if (selecionada && !teamById(selecionada)) selecionada = null;
-  if (!selecionada && estado.teams.length) selecionada = estado.teams[0].id;
+  if (selecionada && !teamById(selecionada)) {
+    selecionada = null;
+    mensagens = [];
+    el("chat-mensagens").replaceChildren();
+  }
   renderConvites();
   renderEquipes();
   renderDetalhe();
@@ -402,14 +426,16 @@ async function carregar() {
 async function iniciar() {
   await preencherPaises();
   // Link de convite (equipe.html#convite=<token>): entra direto e limpa o fragmento.
+  let recente = null;
   const convite = /#convite=([A-Za-z0-9_-]{43})/.exec(location.hash);
   if (convite) {
     history.replaceState(null, "", location.pathname);
     const [ok, data] = await api("join-link", { token: convite[1] });
-    if (ok) { selecionada = data.teamId; message("Você entrou na equipe pelo link de convite."); }
+    if (ok) { recente = data.teamId; message("Você entrou na equipe pelo link de convite."); }
     else message(data.error, true);
   }
   await carregar();
-  await carregarChatInicial();
+  const alvo = recente ?? (estado.teams.length ? estado.teams[0].id : null);
+  if (alvo) trocarPara(alvo);
 }
 iniciar().catch(error => message(error.message || "Algo deu errado. Tente de novo.", true));

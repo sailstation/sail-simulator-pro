@@ -555,3 +555,67 @@ test("mensagens de quem saiu da equipe continuam no histórico com o nome", asyn
   assert.equal(chat.messages[0].user.name, "Beto Passageiro");
   assert.equal(chat.messages[0].mine, false);
 });
+
+test("polling com since traz os tombstones do que foi apagado depois da última consulta", async () => {
+  const ana = await velejador("Ana Tombstone");
+  const beto = await velejador("Beto Tombstone");
+  const [, time] = await teams("create", { name: "Equipe Tombstone", tag: "TMB" }, ana.cookie);
+  const teamId = time.team.id;
+  const [, link] = await teams("invite-link", { teamId }, ana.cookie);
+  await teams("join-link", { token: link.token }, beto.cookie);
+  const [, primeira] = await teams("send", { teamId, body: "vai sumir" }, beto.cookie);
+  await teams("send", { teamId, body: "vai ficar" }, ana.cookie);
+  // O Beto carrega o chat e guarda o relógio do servidor.
+  const [, antes] = await teams("chat", { teamId }, beto.cookie);
+  assert.ok(Number.isSafeInteger(antes.now));
+  // A capitã apaga a mensagem do Beto; o corpo sai na hora e a resposta traz o tombstone.
+  const [sDel, apagada] = await teams("delete-message", { teamId, messageId: primeira.message.id }, ana.cookie);
+  assert.equal(sDel, 200);
+  assert.equal(apagada.message.deleted, true);
+  assert.equal(apagada.message.body, "");
+  // No próximo polling (after na última mensagem + since do relógio anterior), o tombstone chega.
+  const ultimoId = antes.messages[antes.messages.length - 1].id;
+  const [, polling] = await teams("chat", { teamId, after: ultimoId, since: antes.now }, beto.cookie);
+  const tombstone = polling.messages.find(m => m.id === primeira.message.id);
+  assert.ok(tombstone, "o tombstone chega a quem já tinha a mensagem");
+  assert.equal(tombstone.deleted, true);
+  assert.equal(tombstone.body, "");
+  // Sem since, o polling segue só com o que é novo (comportamento anterior).
+  const [, semSince] = await teams("chat", { teamId, after: ultimoId }, beto.cookie);
+  assert.equal(semSince.messages.length, 0);
+  // since sem after não vale.
+  assert.equal((await teams("chat", { teamId, since: antes.now }, beto.cookie))[0], 400);
+  assert.equal((await teams("chat", { teamId, after: ultimoId, since: "abc" }, beto.cookie))[0], 400);
+});
+
+test("convite consumido dentro da transação não deixa entrar: falha desfaz a inscrição", async () => {
+  const ana = await velejador("Ana Corrida");
+  const beto = await velejador("Beto Corrida");
+  const [, time] = await teams("create", { name: "Equipe Corrida", tag: "CRR" }, ana.cookie);
+  const teamId = time.team.id;
+  const [, link] = await teams("invite-link", { teamId }, ana.cookie);
+  // Simula a corrida: o link continua "pending", mas os usos já se esgotaram (outra entrada
+  // consumiu entre a pré-checagem e a transação). A falha no consumo precisa desfazer o INSERT.
+  await pool.query("UPDATE team_invites SET uses=max_uses WHERE team_id=$1", [teamId]);
+  assert.equal((await teams("join-link", { token: link.token }, beto.cookie))[0], 404);
+  const [, lista] = await teams("get", {}, beto.cookie);
+  assert.equal(lista.teams.length, 0, "quem falhou no consumo do convite não entrou na equipe");
+  const [, daAna] = await teams("get", {}, ana.cookie);
+  assert.equal(daAna.teams[0].members.length, 1);
+});
+
+test("denúncia sobrevive à exclusão da equipe (fila de moderação é evidência)", async () => {
+  const ana = await velejador("Ana Evidencia");
+  const beto = await velejador("Beto Evidencia");
+  const [, time] = await teams("create", { name: "Equipe Evidencia", tag: "EVD" }, ana.cookie);
+  const teamId = time.team.id;
+  const [, link] = await teams("invite-link", { teamId }, ana.cookie);
+  await teams("join-link", { token: link.token }, beto.cookie);
+  const [, msg] = await teams("send", { teamId, body: "texto que será denunciado" }, beto.cookie);
+  await teams("report", { teamId, messageId: msg.message.id, reason: "guardar evidência" }, ana.cookie);
+  assert.equal((await teams("delete", { teamId }, ana.cookie))[0], 200);
+  const { rows } = await pool.query("SELECT excerpt, reason, status FROM team_message_reports WHERE team_id=$1", [teamId]);
+  assert.equal(rows.length, 1, "apagar a equipe não apaga a denúncia");
+  assert.equal(rows[0].excerpt, "texto que será denunciado");
+  assert.equal(rows[0].status, "open");
+});

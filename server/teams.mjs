@@ -49,11 +49,17 @@ export function createTeamsApi(pool, {
 } = {}) {
   const one = async (text, params) => (await pool.query(text, params)).rows[0] ?? null;
 
+  // Falha devolvida dentro da transação faz ROLLBACK (ex.: o consumo do convite falhou depois
+  // do INSERT do membro — a entrada inteira desfaz, em vez de commitar sem convite válido).
   async function tx(fn) {
     const client = await pool.connect();
     try {
       await client.query("BEGIN");
       const result = await fn(client);
+      if (result && result.status >= 400) {
+        await client.query("ROLLBACK");
+        return result;
+      }
       await client.query("COMMIT");
       return result;
     } catch (error) {
@@ -153,8 +159,13 @@ export function createTeamsApi(pool, {
         return ok({ ok: true, team: { id, name, tag, country, role: "captain", primary: rows[0].n === 0 } });
       });
     } catch (error) {
-      // 23505: nome ou sigla duplicados (a checagem e o índice disputam a mesma corrida).
-      if (error.code === "23505") return failure("Já existe uma equipe com esse nome ou essa sigla.", 409);
+      // 23505: nome/sigla duplicados, ou a corrida da primeira equipe (uma principal por
+      // jogador, garantida pelo índice) — a checagem e o índice disputam a mesma corrida.
+      if (error.code === "23505") {
+        return String(error.constraint).includes("one_primary")
+          ? failure("Conflito ao definir a equipe principal. Tente de novo.", 409)
+          : failure("Já existe uma equipe com esse nome ou essa sigla.", 409);
+      }
       throw error;
     }
   }
@@ -198,7 +209,9 @@ export function createTeamsApi(pool, {
     if (!target) return failure("Essa pessoa não faz parte da equipe.", 404);
     return tx(async client => {
       await client.query("UPDATE team_members SET role='member' WHERE team_id=$1 AND user_id=$2", [data.teamId, user.id]);
-      await client.query("UPDATE team_members SET role='captain' WHERE team_id=$1 AND user_id=$2", [data.teamId, data.userId]);
+      const { rowCount } = await client.query("UPDATE team_members SET role='captain' WHERE team_id=$1 AND user_id=$2", [data.teamId, data.userId]);
+      // O alvo saiu entre a checagem e a transação: desfaz para a equipe não ficar sem capitão.
+      if (!rowCount) return failure("Essa pessoa não faz parte da equipe.", 404);
       return ok({ ok: true });
     });
   }
@@ -218,11 +231,13 @@ export function createTeamsApi(pool, {
   }
 
   async function setPrimary(data, user) {
+    // A checagem fica fora da transação: consultar o pool com a transação aberta prenderia
+    // duas conexões por pedido e, com o pool cheio, travaria de vez.
+    if (!await membership(user.id, data.teamId)) return NO_TEAM();
     return tx(async client => {
-      const member = await membership(user.id, data.teamId);
-      if (!member) return NO_TEAM();
       await client.query("UPDATE team_members SET is_primary=false WHERE user_id=$1 AND is_primary", [user.id]);
-      await client.query("UPDATE team_members SET is_primary=true WHERE team_id=$1 AND user_id=$2", [data.teamId, user.id]);
+      const { rowCount } = await client.query("UPDATE team_members SET is_primary=true WHERE team_id=$1 AND user_id=$2", [data.teamId, user.id]);
+      if (!rowCount) return NO_TEAM();
       return ok({ ok: true });
     });
   }
@@ -271,10 +286,16 @@ export function createTeamsApi(pool, {
         [data.teamId, inviteeEmail, at]);
       if (dupe) return failure("Esse e-mail já tem um convite pendente.", 409);
     }
-    await pool.query(
-      `INSERT INTO team_invites(id,team_id,invited_by,invitee,invitee_email,created,expires)
-       VALUES($1,$2,$3,$4,$5,$6,$7)`,
-      [randomUUID(), data.teamId, user.id, invitee, inviteeEmail, at, at + inviteTtlMs]);
+    try {
+      await pool.query(
+        `INSERT INTO team_invites(id,team_id,invited_by,invitee,invitee_email,created,expires)
+         VALUES($1,$2,$3,$4,$5,$6,$7)`,
+        [randomUUID(), data.teamId, user.id, invitee, inviteeEmail, at, at + inviteTtlMs]);
+    } catch (error) {
+      // 23505: os índices de convite pendente único fecham a corrida da checagem acima.
+      if (error.code === "23505") return failure("Já existe um convite pendente para essa pessoa.", 409);
+      throw error;
+    }
     return ok({ ok: true, message: invitee
       ? "Convite enviado."
       : "Convite registrado. Se o e-mail tiver conta no jogo, o convite aparece para a pessoa." });
@@ -328,9 +349,21 @@ export function createTeamsApi(pool, {
       if (count[0].n >= maxMembers) return failure("A equipe está cheia.", 409);
       const { rows: mine } = await client.query("SELECT count(*)::int AS n FROM team_members WHERE user_id=$1", [user.id]);
       if (mine[0].n >= maxTeamsPerUser) return failure(`Você já participa de ${maxTeamsPerUser} equipes.`, 409);
-      await client.query(
-        "INSERT INTO team_members(team_id,user_id,role,is_primary,joined) VALUES($1,$2,'member',$3,$4)",
-        [teamId, user.id, mine[0].n === 0, now()]);
+      await client.query("SAVEPOINT entrada");
+      try {
+        await client.query(
+          "INSERT INTO team_members(team_id,user_id,role,is_primary,joined) VALUES($1,$2,'member',$3,$4)",
+          [teamId, user.id, mine[0].n === 0, now()]);
+      } catch (error) {
+        if (error.code !== "23505") throw error;
+        // Duas entradas simultâneas com zero equipes: o índice de uma principal por jogador
+        // rejeita a segunda; ela entra sem ser principal.
+        if (!String(error.constraint).includes("one_primary")) return failure("Você já faz parte desta equipe.", 409);
+        await client.query("ROLLBACK TO SAVEPOINT entrada");
+        await client.query(
+          "INSERT INTO team_members(team_id,user_id,role,is_primary,joined) VALUES($1,$2,'member',false,$3)",
+          [teamId, user.id, now()]);
+      }
       if (extra) {
         const result = await extra(client);
         if (result) return result;
@@ -399,19 +432,26 @@ export function createTeamsApi(pool, {
     }
     if (data.before !== undefined && !cursor(data.before)) return failure("Cursor inválido.", 400);
     if (data.after !== undefined && !cursor(data.after)) return failure("Cursor inválido.", 400);
+    // since (só com after): relógio do servidor da última consulta; traz também os tombstones
+    // das mensagens apagadas depois dele, para o cliente remover o que já tinha na tela.
+    if (data.since !== undefined && (data.after === undefined || !cursor(data.since))) {
+      return failure("Cursor inválido.", 400);
+    }
+    const at = now();
     if (data.after !== undefined) {
       const { rows } = await pool.query(
-        `${MESSAGE_SELECT} WHERE m.team_id=$1 AND m.id>$2 ORDER BY m.id ASC LIMIT $3`,
-        [data.teamId, data.after, limit + 1]);
+        `${MESSAGE_SELECT} WHERE m.team_id=$1 AND (m.id>$2 OR ($3::bigint IS NOT NULL AND m.deleted>$3))
+         ORDER BY m.id ASC LIMIT $4`,
+        [data.teamId, data.after, data.since ?? null, limit + 1]);
       const hasMore = rows.length > limit;
-      return ok({ messages: rows.slice(0, limit).map(messageView(user)), hasMore });
+      return ok({ messages: rows.slice(0, limit).map(messageView(user)), hasMore, now: at });
     }
     const before = data.before === undefined ? Number.MAX_SAFE_INTEGER : data.before;
     const { rows } = await pool.query(
       `${MESSAGE_SELECT} WHERE m.team_id=$1 AND m.id<$2 ORDER BY m.id DESC LIMIT $3`,
       [data.teamId, before, limit + 1]);
     const hasMore = rows.length > limit;
-    return ok({ messages: rows.slice(0, limit).reverse().map(messageView(user)), hasMore });
+    return ok({ messages: rows.slice(0, limit).reverse().map(messageView(user)), hasMore, now: at });
   }
 
   async function send(data, user) {
@@ -442,9 +482,11 @@ export function createTeamsApi(pool, {
       return failure("Só o autor ou o capitão apagam mensagens.", 403);
     }
     // Tombstone: o texto sai do banco; a linha fica para os clientes removerem no polling.
+    const at = now();
     await pool.query("UPDATE team_messages SET body='', deleted=$3 WHERE id=$1 AND team_id=$2",
-      [data.messageId, data.teamId, now()]);
-    return ok({ ok: true });
+      [data.messageId, data.teamId, at]);
+    const profile = await one("SELECT display_name, avatar_emoji, photo_at FROM profiles WHERE user_id=$1", [message.user_id]);
+    return ok({ ok: true, message: messageView(user)({ ...message, body: "", deleted: at, ...(profile ?? {}) }) });
   }
 
   async function report(data, user) {
