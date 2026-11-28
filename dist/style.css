@@ -323,3 +323,6 @@ body.sailing[data-sky=rain] .chart:has(#sea3d:not([hidden])):after{content:"";po
 .sig .tp52{background:#25445a;color:white}.sig .tp52::after{content:"52";font:700 8px system-ui}
 
 #hike-action[hidden]{display:none}
+
+/* Botão "Sair" da conta (ADR-0005/0006): aparece no cabeçalho só quando há sessão. */
+#account-logout{font-size:12px;padding:5px 10px}

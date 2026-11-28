@@ -1,6 +1,8 @@
-// Servidor do Sail Simulator Pro: estáticos de dist/, API /api/auth/* e /api/rooms/* e
-// /__deploy (ADR-0004 e ADR-0005). Com o login obrigatório ligado, sem sessão válida o site
-// redireciona para /login.html e a API responde 401.
+// Servidor do Sail Simulator Pro: estáticos de dist/, API /api/auth/*, /api/profile/* e
+// /api/rooms/* e /__deploy (ADR-0004, ADR-0005 e ADR-0006). Com o login obrigatório ligado,
+// sem sessão válida o site redireciona para /login.html e a API responde 401; com sessão e
+// perfil incompleto (foto, país e clube), os estáticos do jogo redirecionam para /perfil.html
+// e a API de salas responde 403.
 // Variáveis de ambiente: DATABASE_URL (obrigatória), PORT (padrão 9000), SAIL_ENV
 // ("test" habilita a rota de confirmação usada pelo e2e e liga o login sempre),
 // SAIL_LOGIN_REQUIRED (liga/desliga o login; padrão: ligado com SMTP_HOST, desligado sem),
@@ -14,12 +16,14 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import { createPool, migrate } from "./db.mjs";
 import { createRoomsApi } from "./rooms.mjs";
 import { createAuthApi } from "./auth.mjs";
+import { createProfileApi } from "./profile.mjs";
 import { createPow } from "./pow.mjs";
 import { createMailer } from "./mail.mjs";
 
 const ROOT = fileURLToPath(new URL("..", import.meta.url));
 const MAX_BODY = 64 * 1024;
 const MAX_JSON = 4096;
+const MAX_PHOTO = 2 * 1024 * 1024;
 const MIME = {
   html: "text/html; charset=utf-8",
   css: "text/css; charset=utf-8",
@@ -30,6 +34,8 @@ const MIME = {
 };
 // Únicos caminhos servidos sem sessão: a tela de entrada e os assets dela.
 const PUBLIC_PATHS = new Set(["/login.html", "/login.css", "/login.js", "/sail-simulator-pro-splash.webp"]);
+// Com sessão mas perfil incompleto (ADR-0006), só a tela de perfil e os assets dela abrem.
+const PROFILE_PATHS = new Set(["/perfil.html", "/perfil.js", "/perfil.css"]);
 const SECURITY_HEADERS = {
   "X-Content-Type-Options": "nosniff",
   "X-Frame-Options": "DENY",
@@ -75,12 +81,12 @@ export function clientIp(req) {
   return (forwarded && forwarded.split(",").pop().trim()) || peer;
 }
 
-async function readBody(req, res) {
+async function readBody(req, res, maxBytes = MAX_BODY) {
   const chunks = [];
   let size = 0;
   for await (const chunk of req) {
     size += chunk.length;
-    if (size > MAX_BODY) {
+    if (size > maxBytes) {
       res.writeHead(413);
       res.end();
       return null;
@@ -90,9 +96,10 @@ async function readBody(req, res) {
   return Buffer.concat(chunks);
 }
 
-export function createApp({ pool, deployInfo = "{}", assets = loadAssets(), auth, loginRequired = true }) {
+export function createApp({ pool, deployInfo = "{}", assets = loadAssets(), auth, loginRequired = true, profile }) {
   if (!auth) throw new Error("createApp precisa de auth (createAuthApi).");
   const rooms = createRoomsApi(pool);
+  const profiles = profile ?? createProfileApi(pool);
 
   const reply = (res, data, status = 200) => {
     res.writeHead(status, { "Content-Type": "application/json", "Cache-Control": "no-store" });
@@ -131,10 +138,74 @@ export function createApp({ pool, deployInfo = "{}", assets = loadAssets(), auth
     }
   }
 
+  // CSRF por Origin, o mesmo critério do jsonPost, para o upload binário da foto.
+  function originOk(req, res) {
+    const origin = req.headers.origin;
+    if (origin === undefined) return true;
+    let host = null;
+    try { host = new URL(origin).host; } catch { /* Origin malformado: recusado abaixo */ }
+    if (host !== null && host === req.headers.host) return true;
+    reply(res, { error: "Origem inválida." }, 403);
+    return false;
+  }
+
+  // API de perfil (ADR-0006): sempre exige sessão, mesmo com o login desligado — sem sessão
+  // não há a quem associar o perfil. GET só existe para servir a foto; o resto é POST JSON.
+  async function handleProfile(req, res, pathname) {
+    const user = await auth.session(auth.tokenFrom(req));
+    if (!user) return reply(res, { error: "Entre para continuar." }, 401);
+    const action = pathname.slice("/api/profile/".length);
+    try {
+      if (action === "photo" || action.startsWith("photo/")) {
+        // POST em /api/profile/photo é o upload (corpo binário); GET/HEAD servem a foto.
+        if (req.method === "POST" && action === "photo") return await handlePhotoUpload(req, res, user);
+        if (!["GET", "HEAD"].includes(req.method)) return reply(res, { error: "Método inválido." }, 405);
+        const target = action === "photo" ? user.id : decodeURIComponent(action.slice("photo/".length));
+        const photo = await profiles.photoFor(target);
+        if (!photo) return reply(res, { error: "Foto não encontrada." }, 404);
+        const etag = `"p-${target}-${photo.photo_at}"`;
+        const headers = { "Content-Type": photo.photo_type, ETag: etag, "Cache-Control": "private, max-age=0, must-revalidate" };
+        if (req.headers["if-none-match"] === etag) {
+          res.writeHead(304, headers);
+          return res.end();
+        }
+        res.writeHead(200, { ...headers, "Content-Length": photo.photo.length });
+        return res.end(req.method === "HEAD" ? undefined : photo.photo);
+      }
+      const data = await jsonPost(req, res);
+      if (data === null) return;
+      const result = await profiles.handle(action, data, user);
+      reply(res, result.body, result.status);
+    } catch (error) {
+      console.error("falha no perfil", error);
+      reply(res, { error: "Não foi possível concluir agora. Tente de novo." }, 503);
+    }
+  }
+
+  // Upload da foto: corpo binário (até 2 MB), não JSON, com a mesma verificação de Origin.
+  async function handlePhotoUpload(req, res, user) {
+    if (req.method !== "POST") return reply(res, { error: "Método inválido." }, 405);
+    if (!originOk(req, res)) return;
+    const contentType = (req.headers["content-type"] || "").split(";")[0].trim().toLowerCase();
+    const bytes = await readBody(req, res, MAX_PHOTO);
+    if (bytes === null) return;
+    try {
+      const result = await profiles.uploadPhoto(user, contentType, bytes);
+      reply(res, result.body, result.status);
+    } catch (error) {
+      console.error("falha no upload da foto", error);
+      reply(res, { error: "Não foi possível concluir agora. Tente de novo." }, 503);
+    }
+  }
+
   async function handleRooms(req, res, pathname) {
     const data = await jsonPost(req, res);
     if (data === null) return;
-    if (loginRequired && !await auth.session(auth.tokenFrom(req))) return reply(res, { error: "Entre para jogar." }, 401);
+    if (loginRequired) {
+      const user = await auth.session(auth.tokenFrom(req));
+      if (!user) return reply(res, { error: "Entre para jogar." }, 401);
+      if (!await profiles.complete(user.id)) return reply(res, { error: "Complete seu perfil (foto, país e clube) para jogar." }, 403);
+    }
     try {
       const result = await rooms.handle(pathname.split("/").pop(), data);
       reply(res, result.body, result.status);
@@ -145,13 +216,25 @@ export function createApp({ pool, deployInfo = "{}", assets = loadAssets(), auth
   }
 
   async function serveStatic(req, res, pathname) {
-    if (loginRequired && !PUBLIC_PATHS.has(pathname) && !await auth.session(auth.tokenFrom(req))) {
-      if (["GET", "HEAD"].includes(req.method)) {
-        res.writeHead(302, { Location: "/login.html", "Cache-Control": "no-store" });
-        return res.end();
+    if (loginRequired && !PUBLIC_PATHS.has(pathname)) {
+      const user = await auth.session(auth.tokenFrom(req));
+      if (!user) {
+        if (["GET", "HEAD"].includes(req.method)) {
+          res.writeHead(302, { Location: "/login.html", "Cache-Control": "no-store" });
+          return res.end();
+        }
+        res.writeHead(404, { "Content-Type": "text/plain; charset=utf-8" });
+        return res.end("Página não encontrada.");
       }
-      res.writeHead(404, { "Content-Type": "text/plain; charset=utf-8" });
-      return res.end("Página não encontrada.");
+      // Perfil incompleto (ADR-0006): o jogo espera; só a tela de perfil abre.
+      if (!PROFILE_PATHS.has(pathname) && !await profiles.complete(user.id)) {
+        if (["GET", "HEAD"].includes(req.method)) {
+          res.writeHead(302, { Location: "/perfil.html", "Cache-Control": "no-store" });
+          return res.end();
+        }
+        res.writeHead(404, { "Content-Type": "text/plain; charset=utf-8" });
+        return res.end("Página não encontrada.");
+      }
     }
     const entry = assets[pathname === "/" ? "/index.html" : pathname];
     if (!entry || !["GET", "HEAD"].includes(req.method)) {
@@ -178,6 +261,7 @@ export function createApp({ pool, deployInfo = "{}", assets = loadAssets(), auth
         return res.end(deployInfo);
       }
       if (pathname.startsWith("/api/auth/")) return await handleAuth(req, res, pathname);
+      if (pathname.startsWith("/api/profile/")) return await handleProfile(req, res, pathname);
       if (pathname.startsWith("/api/rooms/")) return await handleRooms(req, res, pathname);
       return await serveStatic(req, res, pathname);
     } catch (error) {

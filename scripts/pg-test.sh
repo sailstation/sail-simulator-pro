@@ -79,6 +79,15 @@ const login = await post("auth/login", { email, password: "senha-do-cenario" });
 const cookie = login.headers.get("set-cookie")?.split(";")[0];
 if (!cookie) { console.error("FALHOU: login do cenário legado"); process.exit(1); }
 
+// Perfil completo (ADR-0006) é exigido para a API de salas com o login ligado.
+const png = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==", "base64");
+if ((await post("profile/save", { name: "Legado", country: "BR", clubId: "seed-icrj" }, cookie)).status !== 200) {
+  console.error("FALHOU: salvar perfil do cenário legado"); process.exit(1);
+}
+const foto = await fetch("http://127.0.0.1:53931/api/profile/photo", {
+  method: "POST", headers: { "content-type": "image/png", cookie }, body: png });
+if (foto.status !== 200) { console.error("FALHOU: foto do cenário legado:", foto.status); process.exit(1); }
+
 const r = await post("rooms/sync", { code: "LEGADO2", token: "123e4567-e89b-42d3-a456-426614174000" }, cookie);
 if (r.status !== 200) { console.error("FALHOU: sala do banco legado ilegível:", r.status); process.exit(1); }
 const room = await r.json();

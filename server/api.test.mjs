@@ -31,6 +31,7 @@ before(async () => {
   base = `http://127.0.0.1:${server.address().port}`;
   openBase = `http://127.0.0.1:${openServer.address().port}`;
   cookie = await createAccount("anfitria@exemplo.com");
+  await completeProfile(cookie);
 });
 
 after(async () => {
@@ -63,6 +64,20 @@ async function createAccount(email) {
   const [status, , r] = await post("/api/auth/login", { email, password: "senha-da-jogadora" });
   assert.equal(status, 200);
   return r.headers.get("set-cookie").split(";")[0];
+}
+
+// PNG 1x1 real (transparente) para completar o perfil (ADR-0006: foto obrigatória para jogar).
+const PNG_1X1 = Buffer.from(
+  "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==",
+  "base64");
+async function completeProfile(session, clubId = "seed-icrj") {
+  const [saveStatus] = await post("/api/profile/save",
+    { name: "Anfitriã", country: "BR", clubId }, { cookie: session });
+  assert.equal(saveStatus, 200);
+  const foto = await fetch(`${base}/api/profile/photo`, {
+    method: "POST", headers: { "content-type": "image/png", cookie: session }, body: PNG_1X1
+  });
+  assert.equal(foto.status, 200);
 }
 
 const call = (action, body, headers = {}) => post(`/api/rooms/${action}`, body, { cookie, ...headers });
@@ -337,6 +352,7 @@ test("Origin malformado é recusado com 403, não com erro interno", async () =>
 
 test("logout encerra o acesso ao site e à API", async () => {
   const proprio = await createAccount("sai-fora@exemplo.com");
+  await completeProfile(proprio);
   assert.equal((await post("/api/rooms/create", { name: "A", settings }, { cookie: proprio }))[0], 200);
   const [status, , r] = await post("/api/auth/logout", {}, { cookie: proprio });
   assert.equal(status, 200);
@@ -367,7 +383,7 @@ test("estáticos com sessão: index na raiz, ETag com 304, 404 e /__deploy", asy
 test("migrações são idempotentes e ficam registradas em _migrations", async () => {
   await migrate(pool);
   const { rows } = await pool.query("SELECT name FROM _migrations");
-  assert.deepEqual(rows.map(r => r.name), ["0000_regatta_rooms.sql", "0001_contas.sql"]);
+  assert.deepEqual(rows.map(r => r.name), ["0000_regatta_rooms.sql", "0001_contas.sql", "0002_perfil.sql"]);
 });
 
 test("pool sem DATABASE_URL falha na hora", () => {
