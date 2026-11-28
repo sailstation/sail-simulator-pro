@@ -9,12 +9,12 @@ const base = process.argv[2];
 if (!base) { console.error("uso: node deploy/e2e.mjs <endereço>"); process.exit(1); }
 
 let cookie = "";
-const call = async (scope, action, body) => {
+const call = async (scope, action, body, jar) => {
   const r = await fetch(`${base}/api/${scope}/${action}`, {
-    method: "POST", headers: { "content-type": "application/json", cookie }, body: JSON.stringify(body)
+    method: "POST", headers: { "content-type": "application/json", cookie: jar ? jar.cookie : cookie }, body: JSON.stringify(body)
   });
   const set = r.headers.get("set-cookie");
-  if (set) cookie = set.split(";")[0];
+  if (set) { if (jar) jar.cookie = set.split(";")[0]; else cookie = set.split(";")[0]; }
   return [r.status, await r.json().catch(() => ({}))];
 };
 const ok = (c, m) => { if (!c) { console.log("FALHOU:", m); process.exitCode = 1; } else console.log("ok:", m); };
@@ -77,6 +77,43 @@ ok(sRem === 200 && removida.complete === true && removida.avatar.emoji === "🐬
   "remover a foto volta ao emoji e o perfil segue completo");
 ok((await fetch(`${base}/api/profile/photo`, { headers: { cookie } })).status === 404, "foto removida não é mais servida");
 ok((await fetch(`${base}/`, { redirect: "manual", headers: { cookie } })).status === 200, "site abre com o perfil completo");
+
+// Equipes (ADR-0007): dois usuários — o da sessão principal e um segundo, criado aqui com
+// perfil completo — criam equipe, convidam por e-mail, aceitam, trocam mensagem e saem.
+const tripulante = { cookie: "" };
+// Nome único por rodada: o banco do ambiente de teste é persistente e o convite por nome
+// exige um nome de exibição sem ambiguidade.
+const nomeTripulante = `Tripulante E2E ${Date.now()}`;
+{
+  const email2 = `e2e-trip-${Date.now()}@teste.invalid`;
+  const senha2 = `e2e-${crypto.randomUUID()}`;
+  const [, desafio] = await call("auth", "challenge", {});
+  ok((await call("auth", "signup", { email: email2, password: senha2, pow: solve(desafio) }, tripulante))[0] === 200, "cadastro do segundo usuário");
+  ok((await call("auth", "test-confirm", { email: email2 }, tripulante))[0] === 200, "confirmação do segundo usuário");
+  ok((await call("auth", "login", { email: email2, password: senha2 }, tripulante))[0] === 200, "login do segundo usuário");
+  ok((await call("profile", "save", { name: nomeTripulante, country: "BR", clubId: "seed-icrj" }, tripulante))[0] === 200, "perfil do segundo usuário");
+}
+ok((await call("teams", "get", {}, tripulante))[0] === 200, "API de equipes abre com sessão e perfil");
+const [sEq, eq] = await call("teams", "create", { name: `Equipe E2E ${Date.now()}`, tag: ("E" + Date.now().toString(36)).slice(-5).toUpperCase(), country: "BR" });
+ok(sEq === 200 && eq.team.role === "captain", "criar equipe, quem cria vira capitã");
+ok((await call("teams", "invite", { teamId: eq.team.id, email: "ninguem-existe@teste.invalid" }))[0] === 200, "convite por e-mail sem conta: resposta uniforme");
+ok((await call("teams", "invite", { teamId: eq.team.id, name: nomeTripulante }))[0] === 200, "convite por nome de exibição");
+const [, caixa] = await call("teams", "get", {}, tripulante);
+const convite = caixa.invites.find(c => c.team.id === eq.team.id);
+ok(Boolean(convite), "convite aparece para a convidada");
+ok((await call("teams", "accept", { inviteId: convite.id }, tripulante))[0] === 200, "aceitar o convite");
+const [, comMembros] = await call("teams", "get", {});
+ok(comMembros.teams[0].members.length === 2, "equipe com dois membros");
+const [sMsg, msg] = await call("teams", "send", { teamId: eq.team.id, body: "Boa tarde, tripulação!" });
+ok(sMsg === 200 && msg.message.body === "Boa tarde, tripulação!", "enviar mensagem no chat");
+const [, chatTrip] = await call("teams", "chat", { teamId: eq.team.id }, tripulante);
+ok(chatTrip.messages.some(m => m.body === "Boa tarde, tripulação!" && m.user.name === "Piloto E2E"), "chat entrega a mensagem com o nome da autora");
+ok((await call("teams", "chat", { teamId: eq.team.id, after: chatTrip.messages[chatTrip.messages.length - 1].id }, tripulante))[1].messages.length === 0, "polling sem novidades");
+ok((await call("teams", "report", { teamId: eq.team.id, messageId: msg.message.id, reason: "teste do e2e" }, tripulante))[0] === 200, "denunciar mensagem");
+ok((await call("teams", "delete-message", { teamId: eq.team.id, messageId: msg.message.id }))[0] === 200, "capitã apaga a própria mensagem");
+ok((await call("teams", "leave", { teamId: eq.team.id }, tripulante))[0] === 200, "membro sai da equipe");
+ok((await call("teams", "chat", { teamId: eq.team.id }, tripulante))[0] === 404, "quem saiu não lê mais o chat");
+ok((await call("teams", "delete", { teamId: eq.team.id }))[0] === 200, "capitã apaga a equipe");
 
 // Salas, como antes.
 const settings = { venue: "central", boatClass: "star", sky: "mixed", weather: { wind: 11, gust: 14, dir: 145, wave: .48, waveDir: 155, period: 7, tide: .15, tideRate: .11, current: .2, currentDir: 65 } };
