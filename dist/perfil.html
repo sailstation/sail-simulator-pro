@@ -1,0 +1,49 @@
+<!doctype html><html lang="pt-BR"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><meta name="theme-color" content="#0d1b26"><meta name="robots" content="noindex"><title>Seu perfil — Sail Simulator Pro</title><meta name="description" content="Complete seu perfil de velejador: foto, país e clube."><link rel="stylesheet" href="login.css"><link rel="stylesheet" href="perfil.css"></head>
+<body>
+<main class="tela">
+  <section class="cartao" aria-labelledby="titulo">
+    <p class="marca">Sail Simulator <strong>PRO</strong></p>
+    <h1 id="titulo">Seu perfil de velejador</h1>
+    <p class="nota">Para entrar na raia, complete os quatro campos: foto, nome, país que você representa e clube.</p>
+
+    <form id="form-perfil" novalidate>
+      <div class="foto-linha">
+        <img id="foto-atual" alt="Sua foto de perfil" hidden>
+        <span id="foto-vazia" aria-hidden="true">⛵</span>
+        <div class="foto-campo">
+          <label for="foto">Foto (JPEG, PNG ou WebP, até 2 MB)</label>
+          <input id="foto" name="foto" type="file" accept="image/jpeg,image/png,image/webp">
+        </div>
+      </div>
+
+      <label for="nome">Nome de exibição</label>
+      <input id="nome" name="nome" type="text" minlength="2" maxlength="30" autocomplete="nickname" required>
+
+      <label for="pais">País que você representa</label>
+      <select id="pais" name="pais" required></select>
+
+      <label for="clube-busca">Clube</label>
+      <input id="clube-busca" type="search" placeholder="Busque pelo nome do clube" autocomplete="off">
+      <ul id="clube-resultados" aria-label="Clubes encontrados"></ul>
+      <p id="clube-escolhido" class="escolhido" hidden></p>
+      <p class="linha"><button type="button" class="link" id="botao-sugerir">Não achei meu clube: sugerir cadastro</button></p>
+
+      <fieldset id="sugestao" hidden>
+        <legend>Sugerir clube</legend>
+        <label for="sugestao-nome">Nome do clube</label>
+        <input id="sugestao-nome" type="text" maxlength="80">
+        <label for="sugestao-cidade">Cidade</label>
+        <input id="sugestao-cidade" type="text" maxlength="80">
+        <button type="button" id="sugestao-enviar">Enviar sugestão</button>
+        <p class="nota">A sugestão fica pendente até a moderação e, enquanto isso, só aparece para você.</p>
+      </fieldset>
+
+      <button type="submit">Salvar e velejar</button>
+      <p class="linha"><button type="button" class="link" id="botao-sair">Sair da conta</button></p>
+    </form>
+
+    <p id="mensagem" role="status" aria-live="polite" hidden></p>
+  </section>
+</main>
+<script src="perfil.js" defer></script>
+</body></html>
