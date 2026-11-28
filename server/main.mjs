@@ -60,16 +60,25 @@ export function loginRequiredFrom(env) {
 }
 
 // Estáticos de dist/ carregados em memória com ETag (mesmo critério do antigo build do Worker).
+// Percorre subdiretórios (ex.: dist/flags/ com as bandeiras Twemoji do ADR-0006): a chave é o
+// caminho a partir de dist/ ("flags/br.png" vira "/flags/br.png").
 export function loadAssets(distDir = path.join(ROOT, "dist")) {
-  return Object.fromEntries(readdirSync(distDir, { withFileTypes: true })
-    .filter(file => file.isFile())
-    .map(({ name }) => {
-      const type = MIME[name.split(".").pop()];
-      if (!type) throw new Error("Tipo de asset não suportado: " + name);
-      const bytes = readFileSync(path.join(distDir, name));
+  const assets = {};
+  const walk = (dir, prefix) => {
+    for (const file of readdirSync(dir, { withFileTypes: true })) {
+      if (file.isDirectory()) {
+        walk(path.join(dir, file.name), `${prefix}${file.name}/`);
+        continue;
+      }
+      const type = MIME[file.name.split(".").pop()];
+      if (!type) throw new Error("Tipo de asset não suportado: " + prefix + file.name);
+      const bytes = readFileSync(path.join(dir, file.name));
       const etag = '"' + createHash("sha256").update(bytes).digest("hex").slice(0, 20) + '"';
-      return ["/" + name, [type, etag, bytes]];
-    }));
+      assets[prefix + file.name] = [type, etag, bytes];
+    }
+  };
+  walk(distDir, "/");
+  return assets;
 }
 
 // O servidor só escuta em 127.0.0.1 atrás do Caddy, que preenche X-Forwarded-For.

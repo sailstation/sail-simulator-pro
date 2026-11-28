@@ -1,7 +1,8 @@
 /* Tela de perfil (ADR-0006): nome de exibição, país (ISO 3166-1 alfa-2 com nomes do
-   Intl.DisplayNames e bandeiras emoji do sistema) e clube (busca na lista, ou sugestão que
-   fica pendente até a moderação). A foto é opcional: sem ela, o avatar é um emoji da lista
-   curada servida pelo servidor. Sem perfil completo o servidor não libera o jogo. */
+   Intl.DisplayNames e bandeiras Twemoji servidas pelo próprio site — bandeiras.js) e clube
+   (busca na lista, ou sugestão que fica pendente até a moderação). A foto é opcional: sem ela,
+   o avatar é um emoji da lista curada servida pelo servidor. Sem perfil completo o servidor
+   não libera o jogo. */
 "use strict";
 
 const el = id => document.getElementById(id);
@@ -25,17 +26,23 @@ async function api(action, body) {
   return [response.ok, data];
 }
 
-// Bandeira como emoji Unicode (indicadores regionais): sem assets nem chamadas externas.
-const flag = code => String.fromCodePoint(...[...code].map(c => 0x1F1E6 + c.charCodeAt(0) - 65));
 const countryNames = new Intl.DisplayNames(["pt-BR"], { type: "region" });
 
+// <option> não aceita imagem: o rótulo leva o código ("BR · Brasil") e a bandeira aparece
+// como pré-visualização ao lado do campo (bandeiras.js, Twemoji CC-BY 4.0).
 function fillCountries() {
   const select = el("pais");
   const options = clubes
     .map(code => ({ code, name: countryNames.of(code) || code }))
     .sort((a, b) => a.name.localeCompare(b.name, "pt-BR"));
   select.replaceChildren(new Option("Escolha o país…", ""));
-  for (const { code, name } of options) select.add(new Option(`${flag(code)} ${name}`, code));
+  for (const { code, name } of options) select.add(new Option(bandeiraRotulo(code, name), code));
+  const mostrarBandeira = () => {
+    const alvo = el("pais-bandeira");
+    alvo.replaceChildren(...(select.value ? [bandeira(select.value)] : []));
+  };
+  select.addEventListener("change", mostrarBandeira);
+  mostrarBandeira();
 }
 
 // Pré-visualização do avatar: a foto gravada quando existe; sem ela, o emoji escolhido.
@@ -228,6 +235,7 @@ async function load() {
   if (data.profile) {
     el("nome").value = data.profile.name;
     el("pais").value = data.profile.country;
+    el("pais").dispatchEvent(new Event("change")); // atualiza a prévia da bandeira
     choose(data.profile.club);
     if (data.profile.emoji) emojiEscolhido = data.profile.emoji;
     if (data.profile.photoAt) fotoAtual = data.profile.photoAt;

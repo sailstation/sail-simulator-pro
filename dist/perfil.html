@@ -26,7 +26,10 @@
       <input id="nome" name="nome" type="text" minlength="2" maxlength="30" autocomplete="nickname" required>
 
       <label for="pais">País que você representa</label>
-      <select id="pais" name="pais" required></select>
+      <div class="pais-linha">
+        <select id="pais" name="pais" required></select>
+        <span id="pais-bandeira" aria-hidden="true"></span>
+      </div>
 
       <label for="clube-busca">Clube</label>
       <input id="clube-busca" type="search" placeholder="Busque pelo nome do clube" autocomplete="off">
@@ -49,7 +52,9 @@
     </form>
 
     <p id="mensagem" role="status" aria-live="polite" hidden></p>
+    <p class="atribuicao">Bandeiras: <a href="https://github.com/jdecked/twemoji" rel="noopener">Twemoji</a>, licença CC-BY 4.0.</p>
   </section>
 </main>
+<script src="bandeiras.js" defer></script>
 <script src="perfil.js" defer></script>
 </body></html>
