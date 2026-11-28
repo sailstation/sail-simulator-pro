@@ -1,8 +1,9 @@
-// Servidor do Sail Simulator Pro: estáticos de dist/, API /api/auth/*, /api/profile/* e
-// /api/rooms/* e /__deploy (ADR-0004, ADR-0005 e ADR-0006). Com o login obrigatório ligado,
-// sem sessão válida o site redireciona para /login.html e a API responde 401; com sessão e
-// perfil incompleto (nome, país e clube — a foto é opcional, ADR-0006), os estáticos do jogo
-// redirecionam para /perfil.html e a API de salas responde 403.
+// Servidor do Sail Simulator Pro: estáticos de dist/, API /api/auth/*, /api/profile/*,
+// /api/teams/* e /api/rooms/* e /__deploy (ADR-0004, ADR-0005, ADR-0006 e ADR-0007). Com o
+// login obrigatório ligado, sem sessão válida o site redireciona para /login.html e a API
+// responde 401; com sessão e perfil incompleto (nome, país e clube — a foto é opcional,
+// ADR-0006), os estáticos do jogo redirecionam para /perfil.html e as APIs de salas e de
+// equipes respondem 403.
 // Variáveis de ambiente: DATABASE_URL (obrigatória), PORT (padrão 9000), SAIL_ENV
 // ("test" habilita a rota de confirmação usada pelo e2e e liga o login sempre),
 // SAIL_LOGIN_REQUIRED (liga/desliga o login; padrão: ligado com SMTP_HOST, desligado sem),
@@ -17,6 +18,7 @@ import { createPool, migrate } from "./db.mjs";
 import { createRoomsApi } from "./rooms.mjs";
 import { createAuthApi } from "./auth.mjs";
 import { createProfileApi } from "./profile.mjs";
+import { createTeamsApi } from "./teams.mjs";
 import { createPow } from "./pow.mjs";
 import { createMailer } from "./mail.mjs";
 
@@ -96,10 +98,11 @@ async function readBody(req, res, maxBytes = MAX_BODY) {
   return Buffer.concat(chunks);
 }
 
-export function createApp({ pool, deployInfo = "{}", assets = loadAssets(), auth, loginRequired = true, profile }) {
+export function createApp({ pool, deployInfo = "{}", assets = loadAssets(), auth, loginRequired = true, profile, teams }) {
   if (!auth) throw new Error("createApp precisa de auth (createAuthApi).");
   const rooms = createRoomsApi(pool);
   const profiles = profile ?? createProfileApi(pool);
+  const equipes = teams ?? createTeamsApi(pool);
 
   const reply = (res, data, status = 200) => {
     res.writeHead(status, { "Content-Type": "application/json", "Cache-Control": "no-store" });
@@ -198,6 +201,25 @@ export function createApp({ pool, deployInfo = "{}", assets = loadAssets(), auth
     }
   }
 
+  // API de equipes (ADR-0007): sempre exige sessão (401) e perfil completo (403), mesmo com o
+  // login desligado — sem sessão não há a quem associar a equipe, como no perfil (ADR-0006).
+  async function handleTeams(req, res, pathname) {
+    const user = await auth.session(auth.tokenFrom(req));
+    if (!user) return reply(res, { error: "Entre para continuar." }, 401);
+    if (!await profiles.complete(user.id)) {
+      return reply(res, { error: "Complete seu perfil (nome, país e clube) para participar de equipes." }, 403);
+    }
+    const data = await jsonPost(req, res);
+    if (data === null) return;
+    try {
+      const result = await equipes.handle(pathname.slice("/api/teams/".length), data, user);
+      reply(res, result.body, result.status);
+    } catch (error) {
+      console.error("falha nas equipes", error);
+      reply(res, { error: "Não foi possível concluir agora. Tente de novo." }, 503);
+    }
+  }
+
   async function handleRooms(req, res, pathname) {
     const data = await jsonPost(req, res);
     if (data === null) return;
@@ -262,6 +284,7 @@ export function createApp({ pool, deployInfo = "{}", assets = loadAssets(), auth
       }
       if (pathname.startsWith("/api/auth/")) return await handleAuth(req, res, pathname);
       if (pathname.startsWith("/api/profile/")) return await handleProfile(req, res, pathname);
+      if (pathname.startsWith("/api/teams/")) return await handleTeams(req, res, pathname);
       if (pathname.startsWith("/api/rooms/")) return await handleRooms(req, res, pathname);
       return await serveStatic(req, res, pathname);
     } catch (error) {

@@ -23,8 +23,9 @@ export const LIMITS = {
 };
 
 // Validação simples, sem RFC completa; "<" e ">" ficam de fora para o endereço do envelope
-// SMTP (mail.mjs, bareAddress) nunca divergir do cabeçalho To.
-const EMAIL = /^[^\s@<>]{1,64}@[^\s@<>]{1,190}\.[^\s@<>]{2,24}$/;
+// SMTP (mail.mjs, bareAddress) nunca divergir do cabeçalho To. Exportada para o convite de
+// equipe por e-mail (teams.mjs) validar com o mesmo critério.
+export const EMAIL = /^[^\s@<>]{1,64}@[^\s@<>]{1,190}\.[^\s@<>]{2,24}$/;
 const PASSWORD_MIN = 10;
 const PASSWORD_MAX = 128;
 
