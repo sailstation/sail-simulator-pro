@@ -1,6 +1,6 @@
 # Servidor do Sail Simulator Pro
 
-Decisões registradas no [ADR-0003](../adr/0003-hospedagem-postgresql.md) (hospedagem), no [ADR-0004](../adr/0004-postgresql-banco-do-projeto.md) (backend nativo com PostgreSQL) e no [ADR-0005](../adr/0005-contas-login-confirmacao-email.md) (contas e login obrigatório). Docker e contêineres são proibidos: todos os serviços rodam nativos.
+Decisões registradas no [ADR-0003](../adr/0003-hospedagem-postgresql.md) (hospedagem), no [ADR-0004](../adr/0004-postgresql-banco-do-projeto.md) (backend nativo com PostgreSQL), no [ADR-0005](../adr/0005-contas-login-confirmacao-email.md) (contas e login obrigatório) e no [ADR-0006](../adr/0006-perfil-velejador.md) (perfil do velejador). Docker e contêineres são proibidos: todos os serviços rodam nativos.
 
 | Ambiente | Endereço | O que publica |
 | --- | --- | --- |
@@ -75,7 +75,23 @@ editor /opt/sail/prod.secrets.env
 systemctl restart sail@prod   # login liga sozinho com SMTP_HOST definido
 ```
 
-O `deploy/e2e.mjs` cobre o fluxo completo (cadastro com prova de trabalho, confirmação pela rota de teste, login, salas e logout) e só funciona contra um servidor com `SAIL_ENV=test`.
+O `deploy/e2e.mjs` cobre o fluxo completo (cadastro com prova de trabalho, confirmação pela rota de teste, login, perfil obrigatório, salas e logout) e só funciona contra um servidor com `SAIL_ENV=test`.
+
+## Perfil do velejador (ADR-0006)
+
+Com o login ligado, quem entra sem perfil completo (foto, nome de exibição, país e clube) é redirecionado para `/perfil.html` e a API de salas responde 403 até completar. A API fica em `/api/profile/*` e sempre exige sessão — com o login desligado ela responde 401 e o site funciona como antes, sem exigir perfil.
+
+- **Fotos** ficam no PostgreSQL (`bytea`, até 2 MB, JPEG/PNG/WebP conferidos pelos bytes iniciais) e saem só com sessão, com `Content-Type` gravado e `nosniff`. Não há diretório de uploads nem variável nova.
+- **Clubes**: a tabela `clubs` nasce com uma semente de clubes brasileiros marcados "a verificar" (`verified=false`). Sugestões de jogadores entram como `pending` e só aparecem para o autor.
+- **Moderação (manual, por enquanto)**:
+
+```sh
+sudo -u postgres psql sail_prod -c "SELECT id, name, country, city, created_by FROM clubs WHERE status='pending'"
+sudo -u postgres psql sail_prod -c "UPDATE clubs SET status='approved', verified=true WHERE id='<id>'"
+sudo -u postgres psql sail_prod -c "UPDATE clubs SET status='rejected' WHERE id='<id>'"
+```
+
+- **Importação do OpenStreetMap (offline, nunca no deploy)**: gere o extrato no Overpass (`[out:json];(nwr["leisure"="sailing_club"];nwr["club"="sailing"];);out tags;`), rode `node scripts/import-clubs-osm.mjs extrato.json --country BR > clubes.sql`, revise o SQL (a atribuição ODbL vai no cabeçalho) e aplique com `psql`. A compatibilidade da ODbL precisa estar confirmada (issue #33) antes da primeira importação real.
 
 ### Transição do login (por que nada trava)
 

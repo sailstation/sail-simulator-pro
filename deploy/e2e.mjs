@@ -1,4 +1,5 @@
-// Teste ponta a ponta: login (cadastro + confirmação pela rota de teste + entrada) e API de salas.
+// Teste ponta a ponta: login (cadastro + confirmação pela rota de teste + entrada), perfil
+// obrigatório (ADR-0006: foto, país e clube) e API de salas.
 // O servidor precisa estar com SAIL_ENV=test (ambiente de teste), que habilita /api/auth/test-confirm.
 // Uso: node deploy/e2e.mjs https://sail-test.sailstation.com
 import { createHash } from "node:crypto";
@@ -40,6 +41,26 @@ const [, challenge] = await call("auth", "challenge", {});
 ok((await call("auth", "signup", { email, password, pow: solve(challenge) }))[0] === 200, "cadastro com prova de trabalho");
 ok((await call("auth", "test-confirm", { email }))[0] === 200, "confirmação de e-mail (rota de teste)");
 ok((await call("auth", "login", { email, password }))[0] === 200 && cookie, "login devolve cookie de sessão");
+
+// Perfil obrigatório (ADR-0006): incompleto bloqueia o jogo até foto, país e clube estarem preenchidos.
+const settings0 = { venue: "central", boatClass: "star", sky: "mixed", weather: { wind: 11, gust: 14, dir: 145, wave: .48, waveDir: 155, period: 7, tide: .15, tideRate: .11, current: .2, currentDir: 65 } };
+ok((await call("rooms", "create", { name: "x", settings: settings0 }))[0] === 403, "salas bloqueadas com perfil incompleto");
+ok((await fetch(`${base}/`, { redirect: "manual", headers: { cookie } })).status === 302, "site redireciona para a tela de perfil");
+ok((await fetch(`${base}/perfil.html`, { headers: { cookie } })).status === 200, "tela de perfil abre com a sessão");
+const [, perfil] = await call("profile", "get", {}); ok(perfil.complete === false, "perfil nasce incompleto");
+const [, paises] = await call("profile", "countries", {}); ok(paises.countries.includes("BR"), "lista de países com BR");
+const [, busca] = await call("profile", "clubs/search", { query: "veleiros" });
+ok(busca.clubs.some(c => c.id === "seed-veleiros-do-sul"), "busca encontra clube da semente");
+const [sSug, sug] = await call("profile", "clubs/suggest", { name: `Clube E2E ${Date.now()}`, country: "BR", city: "Santos" });
+ok(sSug === 200 && sug.club.status === "pending", "sugestão de clube fica pendente");
+ok((await call("profile", "save", { name: "Piloto E2E", country: "BR", clubId: sug.club.id }))[0] === 200, "perfil salvo");
+ok((await call("rooms", "create", { name: "x", settings: settings0 }))[0] === 403, "sem foto o jogo continua bloqueado");
+const png = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==", "base64");
+const envio = await fetch(`${base}/api/profile/photo`, { method: "POST", headers: { "content-type": "image/png", cookie }, body: png });
+ok(envio.status === 200, "upload da foto");
+const foto = await fetch(`${base}/api/profile/photo`, { headers: { cookie } });
+ok(foto.status === 200 && foto.headers.get("content-type") === "image/png", "foto servida com o tipo certo");
+ok((await fetch(`${base}/`, { redirect: "manual", headers: { cookie } })).status === 200, "site abre com o perfil completo");
 
 // Salas, como antes.
 const settings = { venue: "central", boatClass: "star", sky: "mixed", weather: { wind: 11, gust: 14, dir: 145, wave: .48, waveDir: 155, period: 7, tide: .15, tideRate: .11, current: .2, currentDir: 65 } };
