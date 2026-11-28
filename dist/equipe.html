@@ -1,0 +1,83 @@
+<!doctype html><html lang="pt-BR"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><meta name="theme-color" content="#0d1b26"><meta name="robots" content="noindex"><title>Equipes — Sail Simulator Pro</title><meta name="description" content="Crie sua equipe, convide velejadores e converse com a tripulação."><link rel="stylesheet" href="login.css"><link rel="stylesheet" href="perfil.css"><link rel="stylesheet" href="equipe.css"></head>
+<body>
+<main class="tela">
+  <section class="cartao cartao-largo" aria-labelledby="titulo">
+    <p class="marca">Sail Simulator <strong>PRO</strong></p>
+    <h1 id="titulo">Equipes</h1>
+
+    <section id="caixa-convites" hidden>
+      <h2>Convites para você</h2>
+      <ul id="lista-convites" class="lista"></ul>
+    </section>
+
+    <section>
+      <h2>Suas equipes</h2>
+      <ul id="lista-equipes" class="lista"></ul>
+      <p id="sem-equipes" class="nota" hidden>Você ainda não faz parte de nenhuma equipe. Crie a sua abaixo ou peça um convite.</p>
+    </section>
+
+    <section id="equipe-detalhe" hidden>
+      <h2 id="detalhe-nome"></h2>
+      <p id="detalhe-info" class="nota"></p>
+      <ul id="lista-membros" class="lista"></ul>
+
+      <div id="acoes-capitao" hidden>
+        <form id="form-convidar" novalidate>
+          <label for="convidar-para">Convidar por nome de exibição ou e-mail</label>
+          <div class="linha-campos">
+            <input id="convidar-para" type="text" maxlength="190" autocomplete="off" placeholder="Nome ou e-mail">
+            <button type="submit">Convidar</button>
+          </div>
+        </form>
+        <form id="form-link" novalidate>
+          <label for="link-usos">Convite por link (usos)</label>
+          <div class="linha-campos">
+            <input id="link-usos" type="number" min="1" max="50" value="1">
+            <button type="submit">Gerar link</button>
+          </div>
+          <p id="link-pronto" class="escolhido" hidden></p>
+        </form>
+        <div id="convites-pendentes" hidden>
+          <h3>Convites pendentes</h3>
+          <ul id="lista-pendentes" class="lista"></ul>
+        </div>
+        <p class="linha"><button type="button" class="link perigo" id="botao-apagar-equipe">Apagar a equipe</button></p>
+      </div>
+
+      <p class="linha">
+        <button type="button" class="link" id="botao-principal" hidden>Tornar minha equipe principal</button>
+        <button type="button" class="link" id="botao-sair-equipe">Sair da equipe</button>
+      </p>
+
+      <div id="chat">
+        <h3>Chat da equipe</h3>
+        <p class="linha"><button type="button" class="link" id="chat-anteriores" hidden>Carregar mensagens anteriores</button></p>
+        <ul id="chat-mensagens" aria-live="polite"></ul>
+        <form id="form-mensagem" novalidate>
+          <div class="linha-campos">
+            <input id="mensagem-texto" type="text" maxlength="500" autocomplete="off" placeholder="Mensagem para a tripulação">
+            <button type="submit">Enviar</button>
+          </div>
+        </form>
+      </div>
+    </section>
+
+    <section>
+      <h2>Criar equipe</h2>
+      <form id="form-criar" novalidate>
+        <label for="equipe-nome">Nome da equipe</label>
+        <input id="equipe-nome" type="text" minlength="3" maxlength="40" required>
+        <label for="equipe-sigla">Sigla (2 a 5 letras ou dígitos)</label>
+        <input id="equipe-sigla" type="text" minlength="2" maxlength="5" required>
+        <label for="equipe-pais">País (opcional)</label>
+        <select id="equipe-pais" name="equipe-pais"></select>
+        <button type="submit">Criar equipe</button>
+      </form>
+    </section>
+
+    <p id="mensagem" role="status" aria-live="polite" hidden></p>
+    <p class="linha"><a href="/">Voltar ao jogo</a></p>
+  </section>
+</main>
+<script src="equipe.js" defer></script>
+</body></html>

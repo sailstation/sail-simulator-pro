@@ -1,7 +1,7 @@
-/* Conta no jogo (ADR-0005/0006): mostra o avatar (foto ou emoji) e o botão "Sair" quando há
-   sessão e, como segunda barreira (o servidor já redireciona), leva quem está com perfil
-   incompleto para /perfil.html. Com o login desligado não há sessão: a API responde 401 e
-   nada disso aparece. */
+/* Conta no jogo (ADR-0005/0006/0007): mostra o avatar (foto ou emoji), o botão "Equipe" e o
+   botão "Sair" quando há sessão e, como segunda barreira (o servidor já redireciona), leva
+   quem está com perfil incompleto para /perfil.html. Com o login desligado não há sessão: a
+   API responde 401 e nada disso aparece. */
 "use strict";
 
 (function () {
@@ -11,6 +11,10 @@
     await fetch("/api/auth/logout", { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" });
     location.assign("/login.html");
   });
+  const teamButton = document.getElementById("account-team");
+  if (teamButton) {
+    teamButton.addEventListener("click", () => location.assign("/equipe.html"));
+  }
   fetch("/api/profile/get", { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" })
     .then(async response => {
       if (!response.ok) return; // 401: login desligado (ou sessão expirada); nada a mostrar
@@ -28,6 +32,7 @@
         }
         avatar.hidden = false;
       }
+      if (teamButton) teamButton.hidden = false;
       button.hidden = false;
     })
     .catch(() => {});
