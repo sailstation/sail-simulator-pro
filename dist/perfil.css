@@ -26,6 +26,27 @@ select:focus { outline: 2px solid #6db6d8; outline-offset: 1px; border-color: tr
 }
 .foto-campo { flex: 1; }
 .foto-campo input { padding: 8px; font-size: 14px; }
+#remover-foto { margin-top: 6px; font-size: 13px; }
+#emoji-grade {
+  display: grid;
+  grid-template-columns: repeat(8, 1fr);
+  gap: 6px;
+  margin-top: 8px;
+}
+#emoji-grade button {
+  padding: 7px 0;
+  border: 1px solid rgba(255, 255, 255, .16);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, .06);
+  font-size: 21px;
+  line-height: 1.2;
+  cursor: pointer;
+}
+#emoji-grade button:hover { border-color: #6db6d8; }
+#emoji-grade button[aria-selected="true"] {
+  border-color: #6db6d8;
+  background: rgba(109, 182, 216, .25);
+}
 #clube-resultados { list-style: none; margin: 6px 0 0; padding: 0; max-height: 180px; overflow-y: auto; }
 #clube-resultados li {
   padding: 9px 10px;

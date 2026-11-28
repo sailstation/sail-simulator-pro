@@ -11,7 +11,7 @@ Leia este índice antes de propor ou implementar qualquer mudança. O fluxo est�
 | [0003](0003-hospedagem-postgresql.md) | Hospedagem própria e PostgreSQL | proposto | #29 |
 | [0004](0004-postgresql-banco-do-projeto.md) | PostgreSQL como banco do projeto | proposto | #31 |
 | [0005](0005-contas-login-confirmacao-email.md) | Contas, login e confirmação de e-mail | proposto | #32 |
-| [0006](0006-perfil-velejador.md) | Perfil do velejador: foto, país e clube | proposto | #33 |
+| [0006](0006-perfil-velejador.md) | Perfil do velejador: nome, país, clube e avatar | proposto | #33 |
 
 Estados: **proposto** (aguardando aceite do responsável na issue), **aceito**, **substituído por ADR-NNNN**, **descontinuado**. ADR aceito não é editado; uma mudança gera um novo ADR que o substitui. O número é o próximo livre no momento do merge.
 

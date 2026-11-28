@@ -1,12 +1,14 @@
-/* Tela de perfil (ADR-0006): foto, nome de exibição, país (ISO 3166-1 alfa-2 com nomes do
+/* Tela de perfil (ADR-0006): nome de exibição, país (ISO 3166-1 alfa-2 com nomes do
    Intl.DisplayNames e bandeiras emoji do sistema) e clube (busca na lista, ou sugestão que
-   fica pendente até a moderação). Sem perfil completo o servidor não libera o jogo. */
+   fica pendente até a moderação). A foto é opcional: sem ela, o avatar é um emoji da lista
+   curada servida pelo servidor. Sem perfil completo o servidor não libera o jogo. */
 "use strict";
 
 const el = id => document.getElementById(id);
 let clubes = [];          // códigos ISO vindos do servidor
 let escolhido = null;     // clube selecionado {id, name, city, country, status}
 let fotoAtual = null;     // photoAt da foto já gravada
+let emojiEscolhido = "⛵"; // emoji do avatar (padrão do servidor)
 
 function message(text, isError = false) {
   const box = el("mensagem");
@@ -34,6 +36,40 @@ function fillCountries() {
     .sort((a, b) => a.name.localeCompare(b.name, "pt-BR"));
   select.replaceChildren(new Option("Escolha o país…", ""));
   for (const { code, name } of options) select.add(new Option(`${flag(code)} ${name}`, code));
+}
+
+// Pré-visualização do avatar: a foto gravada quando existe; sem ela, o emoji escolhido.
+function preview() {
+  const img = el("foto-atual");
+  const vazio = el("foto-vazia");
+  el("remover-foto").hidden = !fotoAtual;
+  if (fotoAtual) {
+    img.src = "/api/profile/photo?t=" + fotoAtual;
+    img.hidden = false;
+    vazio.hidden = true;
+  } else {
+    img.hidden = true;
+    vazio.hidden = false;
+    vazio.textContent = emojiEscolhido;
+  }
+}
+
+function fillEmojis(emojis) {
+  const grid = el("emoji-grade");
+  grid.replaceChildren(...emojis.map(emoji => {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.textContent = emoji;
+    button.setAttribute("role", "option");
+    button.setAttribute("aria-selected", String(emoji === emojiEscolhido));
+    button.setAttribute("aria-label", "Avatar " + emoji);
+    button.addEventListener("click", () => {
+      emojiEscolhido = emoji;
+      for (const other of grid.children) other.setAttribute("aria-selected", String(other === button));
+      if (!fotoAtual) preview();
+    });
+    return button;
+  }));
 }
 
 function clubLabel(club) {
@@ -131,10 +167,22 @@ async function uploadPhoto(file) {
 el("foto").addEventListener("change", () => {
   const file = el("foto").files[0];
   if (!file) return;
-  const preview = el("foto-atual");
-  preview.src = URL.createObjectURL(file);
-  preview.hidden = false;
+  const img = el("foto-atual");
+  img.src = URL.createObjectURL(file);
+  img.hidden = false;
   el("foto-vazia").hidden = true;
+});
+
+el("remover-foto").addEventListener("click", async () => {
+  message("");
+  try {
+    const [ok, data] = await api("remove-photo");
+    if (!ok) throw new Error(data.error);
+    fotoAtual = null;
+    el("foto").value = "";
+    preview();
+    message("Foto removida. Seu avatar agora é o emoji escolhido.");
+  } catch (error) { message(error.message || "Algo deu errado. Tente de novo.", true); }
 });
 
 el("form-perfil").addEventListener("submit", async event => {
@@ -145,13 +193,16 @@ el("form-perfil").addEventListener("submit", async event => {
   try {
     if (!escolhido) throw new Error("Escolha o seu clube na busca (ou sugira um novo).");
     const [ok, data] = await api("save", {
-      name: el("nome").value, country: el("pais").value, clubId: escolhido.id
+      name: el("nome").value, country: el("pais").value, clubId: escolhido.id, emoji: emojiEscolhido
     });
     if (!ok) throw new Error(data.error);
     const file = el("foto").files[0];
-    if (file) await uploadPhoto(file);
+    if (file) {
+      const enviada = await uploadPhoto(file);
+      fotoAtual = enviada.photoAt;
+    }
     const [, state] = await api("get");
-    if (!state.complete) throw new Error("Falta a foto: envie uma imagem JPEG, PNG ou WebP de até 2 MB.");
+    if (!state.complete) throw new Error("Perfil incompleto: confira nome, país e clube.");
     location.assign("/");
   } catch (error) {
     message(error.message || "Algo deu errado. Tente de novo.", true);
@@ -170,19 +221,18 @@ async function load() {
   if (!okPaises) throw new Error(paises.error || "Não foi possível carregar a lista de países.");
   clubes = paises.countries;
   fillCountries();
+  const [okAvatares, avatares] = await api("avatars");
+  if (!okAvatares) throw new Error(avatares.error || "Não foi possível carregar os avatares.");
   const [okPerfil, data] = await api("get");
   if (!okPerfil) throw new Error(data.error || "Não foi possível carregar o perfil.");
   if (data.profile) {
     el("nome").value = data.profile.name;
     el("pais").value = data.profile.country;
     choose(data.profile.club);
-    if (data.profile.photoAt) {
-      fotoAtual = data.profile.photoAt;
-      const preview = el("foto-atual");
-      preview.src = "/api/profile/photo?t=" + fotoAtual;
-      preview.hidden = false;
-      el("foto-vazia").hidden = true;
-    }
+    if (data.profile.emoji) emojiEscolhido = data.profile.emoji;
+    if (data.profile.photoAt) fotoAtual = data.profile.photoAt;
   }
+  fillEmojis(avatares.emojis);
+  preview();
 }
 load().catch(error => message(error.message, true));
