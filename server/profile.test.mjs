@@ -77,11 +77,15 @@ async function createAccount(name = "conta") {
   assert.equal(status, 200);
   return r.headers.get("set-cookie").split(";")[0];
 }
-// Preenche o perfil inteiro (campos + foto) e devolve o cookie pronto para jogar.
-async function completeProfile(cookie, clubId = "seed-icrj") {
-  assert.equal((await profile("save", { name: "Velejadora", country: "BR", clubId }, cookie))[0], 200);
-  assert.equal((await upload(cookie, PNG)).status, 200);
-}
+test("avatars: lista curada, com ⛵ presente e sem repetições", async () => {
+  const cookie = await createAccount("emojis");
+  const [status, body] = await profile("avatars", {}, cookie);
+  assert.equal(status, 200);
+  assert.ok(body.emojis.includes("⛵"), "o padrão ⛵ está na lista");
+  assert.ok(body.emojis.length >= 20 && body.emojis.length <= 30, "lista curta e curada");
+  assert.equal(new Set(body.emojis).size, body.emojis.length);
+  assert.ok(body.emojis.every(e => typeof e === "string" && e.length > 0));
+});
 
 const settings = { venue: "central", boatClass: "star", sky: "mixed",
   weather: { wind: 11, gust: 14, dir: 145, wave: .48, waveDir: 155, period: 7, tide: .15, tideRate: .11, current: .2, currentDir: 65 } };
@@ -125,18 +129,73 @@ test("save valida nome, país e clube", async () => {
   assert.equal((await save({ name: "Velejadora", country: "BR" }))[0], 400, "clube ausente");
 });
 
+test("perfil completo não exige foto: nome, país e clube bastam (foto opcional, 28/11/2026)", async () => {
+  const cookie = await createAccount("sem-foto");
+  const [status, saved] = await profile("save", { name: "Vento Bom", country: "BR", clubId: "seed-icrj" }, cookie);
+  assert.equal(status, 200);
+  assert.equal(saved.complete, true, "sem foto o perfil já fica completo");
+  assert.deepEqual(saved.avatar, { type: "emoji", emoji: "⛵" }, "sem escolha, o avatar padrão é ⛵");
+  const [, got] = await profile("get", {}, cookie);
+  assert.equal(got.complete, true);
+  assert.equal(got.profile.photoAt, null);
+  assert.equal(got.avatar.type, "emoji");
+  assert.equal((await post("/api/rooms/create", { name: "A", settings }, { cookie }))[0], 200, "salas abrem sem foto");
+  assert.equal((await fetch(`${base}/`, { headers: { cookie } })).status, 200, "o site abre sem foto");
+});
+
+test("save valida o emoji do avatar contra a lista curada; escolha fica gravada", async () => {
+  const cookie = await createAccount("emoji");
+  const save = data => profile("save", data, cookie);
+  assert.equal((await save({ name: "Emoji", country: "BR", clubId: "seed-icrj", emoji: "😀" }))[0], 400,
+    "emoji fora da lista curada é recusado");
+  assert.equal((await save({ name: "Emoji", country: "BR", clubId: "seed-icrj", emoji: 42 }))[0], 400,
+    "emoji não textual é recusado");
+  const [status, saved] = await save({ name: "Emoji", country: "BR", clubId: "seed-icrj", emoji: "🐋" });
+  assert.equal(status, 200);
+  assert.deepEqual(saved.avatar, { type: "emoji", emoji: "🐋" });
+  const [, got] = await profile("get", {}, cookie);
+  assert.equal(got.avatar.emoji, "🐋", "o emoji escolhido fica gravado");
+  await save({ name: "Emoji", country: "PT", clubId: "seed-icrj" });
+  assert.equal((await profile("get", {}, cookie))[1].avatar.emoji, "🐋",
+    "salvar sem emoji não apaga a escolha");
+});
+
+test("remover a foto devolve o avatar ao emoji e mantém o perfil completo", async () => {
+  const cookie = await createAccount("sem-foto-2");
+  assert.equal((await profile("remove-photo", {}, cookie))[0], 409, "sem perfil salvo não há o que remover");
+  await profile("save", { name: "Sem Foto", country: "BR", clubId: "seed-icrj", emoji: "🐬" }, cookie);
+  const [idem, idemBody] = await profile("remove-photo", {}, cookie);
+  assert.equal(idem, 200, "remover sem foto é idempotente");
+  assert.equal(idemBody.avatar.emoji, "🐬");
+  assert.equal((await upload(cookie, PNG)).status, 200);
+  const [, comFoto] = await profile("get", {}, cookie);
+  assert.equal(comFoto.avatar.type, "photo", "com foto, o avatar é a foto");
+  const [rmStatus, removida] = await profile("remove-photo", {}, cookie);
+  assert.equal(rmStatus, 200);
+  assert.equal(removida.complete, true, "perfil segue completo sem a foto");
+  assert.deepEqual(removida.avatar, { type: "emoji", emoji: "🐬" });
+  assert.equal((await fetch(`${base}/api/profile/photo`, { headers: { cookie } })).status, 404,
+    "a foto removida não é mais servida");
+  const [, got] = await profile("get", {}, cookie);
+  assert.equal(got.profile.photoAt, null);
+  assert.equal(got.avatar.emoji, "🐬");
+});
+
 test("fluxo completo: save + foto completam o perfil; foto é servida com os cabeçalhos certos", async () => {
   const cookie = await createAccount("fluxo");
   const [saveStatus, saved] = await profile("save", { name: "  Maria   do Mar  ", country: "BR", clubId: "seed-veleiros-do-sul" }, cookie);
   assert.equal(saveStatus, 200);
   assert.equal(saved.profile.name, "Maria do Mar", "espaços são normalizados");
   assert.equal(saved.profile.club.id, "seed-veleiros-do-sul");
-  assert.equal(saved.complete, false, "sem foto ainda está incompleto");
+  assert.equal(saved.complete, true, "a foto é opcional: nome, país e clube bastam");
+  assert.equal(saved.avatar.type, "emoji", "sem foto, o avatar é o emoji");
 
   assert.equal((await upload(cookie, PNG)).status, 200);
   const [, got] = await profile("get", {}, cookie);
   assert.equal(got.complete, true);
   assert.ok(got.profile.photoAt > 0);
+  assert.equal(got.avatar.type, "photo", "com foto enviada, o avatar passa a ser a foto");
+  assert.equal(got.avatar.photoAt, got.profile.photoAt);
 
   const foto = await fetch(`${base}/api/profile/photo`, { headers: { cookie } });
   assert.equal(foto.status, 200);
@@ -209,8 +268,8 @@ test("gate: perfil incompleto bloqueia salas (403) e redireciona os estáticos p
   assert.equal((await fetch(`${base}/perfil.html`, { headers: { cookie } })).status, 200);
   assert.equal((await fetch(`${base}/perfil.js`, { headers: { cookie } })).status, 200);
   assert.equal((await fetch(`${base}/perfil.html`, { method: "POST", headers: { cookie } })).status, 404);
-  // Depois de completar, tudo abre.
-  await completeProfile(cookie);
+  // Depois de completar (sem foto — ela é opcional), tudo abre.
+  assert.equal((await profile("save", { name: "Gate", country: "BR", clubId: "seed-icrj" }, cookie))[0], 200);
   assert.equal((await fetch(`${base}/`, { headers: { cookie } })).status, 200);
   assert.equal((await post("/api/rooms/create", { name: "A", settings }, { cookie }))[0], 200);
 });

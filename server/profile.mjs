@@ -1,10 +1,21 @@
-// Perfil do velejador (ADR-0006): nome de exibição, país (ISO 3166-1 alfa-2), clube e foto.
-// O perfil completo é exigido para jogar quando o login está obrigatório; a foto fica no
-// PostgreSQL (bytea, até 2 MB) e só é servida para usuários com sessão. Clubes sugeridos por
-// jogadores ficam "pending" e visíveis somente para o autor até a moderação (por SQL, por ora).
+// Perfil do velejador (ADR-0006): nome de exibição, país (ISO 3166-1 alfa-2), clube e avatar.
+// O perfil completo (exigido para jogar quando o login está obrigatório) pede nome, país e clube;
+// a foto é opcional (definição da equipe, 28/11/2026): sem ela, o avatar é um emoji da lista
+// curada abaixo, validada no servidor, com ⛵ de padrão. A foto fica no PostgreSQL (bytea, até
+// 2 MB) e só é servida para usuários com sessão; removê-la devolve o avatar ao emoji. Clubes
+// sugeridos por jogadores ficam "pending" e visíveis somente para o autor até a moderação
+// (por SQL, por ora).
 import { randomUUID } from "node:crypto";
 import { normalizeCountry, COUNTRY_CODES } from "./countries.mjs";
 import { stripImageMetadata, MalformedImageError } from "./image-metadata.mjs";
+
+// Lista curada de emojis de avatar (vela, mar e esporte): o servidor só aceita estes valores.
+export const AVATAR_EMOJIS = Object.freeze([
+  "⛵", "🚤", "🌊", "⚓", "🧭", "🐬", "🐋", "🦈", "🐢", "🏄", "🚣", "🌬️",
+  "☀️", "🌅", "🏝️", "🦭", "🐙", "🦀", "🐠", "🏆", "🎯", "🔱", "🛟", "🪁"
+]);
+const DEFAULT_EMOJI = "⛵";
+const EMOJI_SET = new Set(AVATAR_EMOJIS);
 
 const PHOTO_MAX = 2 * 1024 * 1024;
 const PHOTO_TYPES = new Set(["image/jpeg", "image/png", "image/webp"]);
@@ -41,21 +52,30 @@ const clubView = row => ({
   status: row.status, verified: row.verified, mine: row.mine === true
 });
 
+// Avatar público: a foto quando existe; sem ela, o emoji escolhido (padrão ⛵).
+const avatarOf = row => row.photo_at
+  ? { type: "photo", photoAt: row.photo_at }
+  : { type: "emoji", emoji: row.avatar_emoji };
+
 export function createProfileApi(pool, { now = () => Date.now() } = {}) {
   const one = async (text, params) => (await pool.query(text, params)).rows[0] ?? null;
 
-  // Completo = campos preenchidos + foto + clube utilizável (aprovado, ou pendente do próprio jogador).
+  // Completo = nome, país e clube utilizável (aprovado, ou pendente do próprio jogador).
+  // A foto é opcional (definição da equipe, 28/11/2026) e não entra na regra.
   async function complete(userId) {
     const row = await one(
       `SELECT 1 AS ok FROM profiles p JOIN clubs c ON c.id = p.club_id
-       WHERE p.user_id=$1 AND p.photo IS NOT NULL
+       WHERE p.user_id=$1
          AND (c.status='approved' OR (c.status='pending' AND c.created_by=$1))`, [userId]);
     return Boolean(row);
   }
 
+  const avatarFor = async userId =>
+    one("SELECT avatar_emoji, photo_at FROM profiles WHERE user_id=$1", [userId]);
+
   async function get(_data, user) {
     const row = await one(
-      `SELECT p.display_name, p.country, p.photo_at,
+      `SELECT p.display_name, p.country, p.photo_at, p.avatar_emoji,
               c.id club_id, c.name club_name, c.city club_city, c.country club_country,
               c.status club_status, c.verified club_verified
        FROM profiles p JOIN clubs c ON c.id = p.club_id WHERE p.user_id=$1`, [user.id]);
@@ -66,9 +86,11 @@ export function createProfileApi(pool, { now = () => Date.now() } = {}) {
         name: row.display_name,
         country: row.country,
         photoAt: row.photo_at,
+        emoji: row.avatar_emoji,
         club: { id: row.club_id, name: row.club_name, city: row.club_city, country: row.club_country,
                 status: row.club_status, verified: row.club_verified }
-      }
+      },
+      avatar: row === null ? null : avatarOf(row)
     });
   }
 
@@ -91,11 +113,22 @@ export function createProfileApi(pool, { now = () => Date.now() } = {}) {
     if (typeof data.clubId !== "string" || !data.clubId) return failure("Escolha um clube da lista.", 400);
     const club = await findClubFor(user, data.clubId);
     if (!club) return failure("Clube não encontrado. Busque na lista ou sugira um novo.", 404);
+    // O emoji do avatar é opcional no pedido e, quando vem, precisa ser da lista curada —
+    // nada de emoji livre (definição da equipe, 28/11/2026). Ausente, a escolha anterior fica.
+    let emoji = null;
+    if (data.emoji !== undefined) {
+      if (typeof data.emoji !== "string" || !EMOJI_SET.has(data.emoji)) {
+        return failure("Escolha um emoji da lista.", 400);
+      }
+      emoji = data.emoji;
+    }
     await pool.query(
-      `INSERT INTO profiles(user_id,display_name,country,club_id,updated) VALUES($1,$2,$3,$4,$5)
-       ON CONFLICT (user_id) DO UPDATE SET display_name=$2, country=$3, club_id=$4, updated=$5`,
-      [user.id, name, country, club.id, now()]);
-    return ok({ ok: true, complete: await complete(user.id),
+      `INSERT INTO profiles(user_id,display_name,country,club_id,avatar_emoji,updated) VALUES($1,$2,$3,$4,$5,$6)
+       ON CONFLICT (user_id) DO UPDATE SET display_name=$2, country=$3, club_id=$4, updated=$6,
+         avatar_emoji=COALESCE($7, profiles.avatar_emoji)`,
+      [user.id, name, country, club.id, emoji ?? DEFAULT_EMOJI, now(), emoji]);
+    const row = await avatarFor(user.id);
+    return ok({ ok: true, complete: await complete(user.id), avatar: avatarOf(row),
       profile: { name, country, club: clubView({ ...club, mine: true }) } });
   }
 
@@ -128,6 +161,16 @@ export function createProfileApi(pool, { now = () => Date.now() } = {}) {
   async function photoFor(userId) {
     if (typeof userId !== "string" || userId.length > 80) return null;
     return one("SELECT photo, photo_type, photo_at FROM profiles WHERE user_id=$1 AND photo IS NOT NULL", [userId]);
+  }
+
+  // Remove a foto e devolve o avatar ao emoji (idempotente: sem foto, nada muda).
+  async function removePhoto(_data, user) {
+    const { rowCount } = await pool.query(
+      "UPDATE profiles SET photo=NULL, photo_type=NULL, photo_at=NULL, updated=$2 WHERE user_id=$1",
+      [user.id, now()]);
+    if (!rowCount) return failure("Salve o perfil antes de mexer na foto.", 409);
+    const row = await avatarFor(user.id);
+    return ok({ ok: true, complete: await complete(user.id), avatar: avatarOf(row) });
   }
 
   async function searchClubs(data, user) {
@@ -181,8 +224,9 @@ export function createProfileApi(pool, { now = () => Date.now() } = {}) {
   }
 
   const actions = {
-    get, save,
+    get, save, "remove-photo": removePhoto,
     countries: async () => ok({ countries: [...COUNTRY_CODES].sort() }),
+    avatars: async () => ok({ emojis: [...AVATAR_EMOJIS] }),
     "clubs/search": searchClubs,
     "clubs/suggest": suggestClub
   };

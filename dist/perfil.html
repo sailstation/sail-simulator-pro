@@ -1,20 +1,26 @@
-<!doctype html><html lang="pt-BR"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><meta name="theme-color" content="#0d1b26"><meta name="robots" content="noindex"><title>Seu perfil — Sail Simulator Pro</title><meta name="description" content="Complete seu perfil de velejador: foto, país e clube."><link rel="stylesheet" href="login.css"><link rel="stylesheet" href="perfil.css"></head>
+<!doctype html><html lang="pt-BR"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><meta name="theme-color" content="#0d1b26"><meta name="robots" content="noindex"><title>Seu perfil — Sail Simulator Pro</title><meta name="description" content="Complete seu perfil de velejador: nome, país e clube; a foto é opcional."><link rel="stylesheet" href="login.css"><link rel="stylesheet" href="perfil.css"></head>
 <body>
 <main class="tela">
   <section class="cartao" aria-labelledby="titulo">
     <p class="marca">Sail Simulator <strong>PRO</strong></p>
     <h1 id="titulo">Seu perfil de velejador</h1>
-    <p class="nota">Para entrar na raia, complete os quatro campos: foto, nome, país que você representa e clube.</p>
+    <p class="nota">Para entrar na raia, preencha nome, país que você representa e clube. A foto é opcional: sem ela, você aparece com o emoji que escolher.</p>
 
     <form id="form-perfil" novalidate>
       <div class="foto-linha">
         <img id="foto-atual" alt="Sua foto de perfil" hidden>
         <span id="foto-vazia" aria-hidden="true">⛵</span>
         <div class="foto-campo">
-          <label for="foto">Foto (JPEG, PNG ou WebP, até 2 MB)</label>
+          <label for="foto">Foto (opcional; JPEG, PNG ou WebP, até 2 MB)</label>
           <input id="foto" name="foto" type="file" accept="image/jpeg,image/png,image/webp">
+          <button type="button" class="link" id="remover-foto" hidden>Remover foto</button>
         </div>
       </div>
+
+      <fieldset id="avatar-campo">
+        <legend>Avatar (vale quando não há foto)</legend>
+        <div id="emoji-grade" role="listbox" aria-label="Escolha o emoji do avatar"></div>
+      </fieldset>
 
       <label for="nome">Nome de exibição</label>
       <input id="nome" name="nome" type="text" minlength="2" maxlength="30" autocomplete="nickname" required>

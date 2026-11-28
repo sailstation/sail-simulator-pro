@@ -1,8 +1,8 @@
 // Servidor do Sail Simulator Pro: estáticos de dist/, API /api/auth/*, /api/profile/* e
 // /api/rooms/* e /__deploy (ADR-0004, ADR-0005 e ADR-0006). Com o login obrigatório ligado,
 // sem sessão válida o site redireciona para /login.html e a API responde 401; com sessão e
-// perfil incompleto (foto, país e clube), os estáticos do jogo redirecionam para /perfil.html
-// e a API de salas responde 403.
+// perfil incompleto (nome, país e clube — a foto é opcional, ADR-0006), os estáticos do jogo
+// redirecionam para /perfil.html e a API de salas responde 403.
 // Variáveis de ambiente: DATABASE_URL (obrigatória), PORT (padrão 9000), SAIL_ENV
 // ("test" habilita a rota de confirmação usada pelo e2e e liga o login sempre),
 // SAIL_LOGIN_REQUIRED (liga/desliga o login; padrão: ligado com SMTP_HOST, desligado sem),
@@ -204,7 +204,7 @@ export function createApp({ pool, deployInfo = "{}", assets = loadAssets(), auth
     if (loginRequired) {
       const user = await auth.session(auth.tokenFrom(req));
       if (!user) return reply(res, { error: "Entre para jogar." }, 401);
-      if (!await profiles.complete(user.id)) return reply(res, { error: "Complete seu perfil (foto, país e clube) para jogar." }, 403);
+      if (!await profiles.complete(user.id)) return reply(res, { error: "Complete seu perfil (nome, país e clube) para jogar." }, 403);
     }
     try {
       const result = await rooms.handle(pathname.split("/").pop(), data);
