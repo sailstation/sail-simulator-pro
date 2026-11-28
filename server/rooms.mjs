@@ -1,5 +1,12 @@
 // API de salas de regata sobre PostgreSQL nativo (ADR-0004).
 // Lógica portada de worker/index.js com parâmetros $n; o contrato HTTP não muda.
+// Progressão (ADR-0008): a sala ganha `mode` nas configurações (padrão 'iniciante' — aberta,
+// como sempre foi), a vaga fica ligada à conta da sessão e o anfitrião encerra a regata
+// ('finish'), momento em que o resultado é gravado e os pontos ranqueados são lançados.
+// Criar e entrar em sala ranqueada (modo Avançado de classe com categoria avançada) passa
+// pela elegibilidade da carreira; salas abertas não exigem nada.
+import { createCareerApi } from "./career.mjs";
+
 const roomLife = 3 * 60 * 60_000;
 const racePreparation = 8 * 60_000;
 const alphabet = "23456789ABCDEFGHJKLMNPQRSTUVWXYZ";
@@ -34,27 +41,40 @@ function checkedSettings(input) {
   if (!input || !["central","north","canas","rio"].includes(input.venue) ||
       !["ilca","snipe","optimist","star","soto40","clubswan36","tp52","brasil40","columbia50","arpege30","cal40"].includes(input.boatClass) ||
       !["mixed","clear","cloudy","rain"].includes(input.sky)) return null;
+  // O modo é da sala, não do jogador (#21); ausente, a sala é aberta (iniciante), como sempre.
+  if (input.mode !== undefined && !["iniciante","avancado"].includes(input.mode)) return null;
   const weather = checkedNumbers(input.weather, limits);
   if (!weather) return null;
   if (input.venue === "canas") weather.dir = 90;
   weather.gust = Math.max(weather.wind, weather.gust);
-  return { venue: input.venue, boatClass: input.boatClass, sky: input.sky === "rain" ? "cloudy" : input.sky, windShift: input.windShift === true, weather };
+  return { venue: input.venue, boatClass: input.boatClass, sky: input.sky === "rain" ? "cloudy" : input.sky,
+    mode: input.mode === "avancado" ? "avancado" : "iniciante", windShift: input.windShift === true, weather };
 }
 
-export function createRoomsApi(pool) {
+export function createRoomsApi(pool, { career = createCareerApi(pool) } = {}) {
   const one = async (text, params) => (await pool.query(text, params)).rows[0] ?? null;
 
   async function view(room, now) {
     const { rows } = await pool.query("SELECT seat,id,name,seen,boat FROM sailors WHERE room=$1 ORDER BY seat", [room.code]);
     return {
-      code: room.code, settings: JSON.parse(room.settings), starts: room.starts, now,
+      code: room.code, settings: JSON.parse(room.settings), starts: room.starts, finished: room.finished ?? null, now,
       players: rows.map(({seat,id,name,seen,boat}) => ({seat,id,name,online:now-seen<9000,boat:boat?JSON.parse(boat):null}))
     };
   }
 
-  async function create(data, name, now) {
+  // Gate de elegibilidade (ADR-0008): null deixa passar; sala aberta nunca exige nada.
+  async function gate(user, settings) {
+    const verdict = await career.checkEligible(user, settings.boatClass, settings.mode);
+    if (verdict.allowed) return null;
+    if (verdict.reason === "session") return failure("Entre para disputar salas ranqueadas.", 403);
+    return failure(`Esta sala é ranqueada e exige a licença ${verdict.requiresName}.`, 403);
+  }
+
+  async function create(data, name, user, now) {
     const settings = checkedSettings(data.settings);
     if (!settings) return failure("Confira as condições da raia.", 400);
+    const blocked = await gate(user, settings);
+    if (blocked) return blocked;
     const room = { code: roomCode(), settings: JSON.stringify(settings), starts: null };
     const id = crypto.randomUUID(), token = crypto.randomUUID();
     const client = await pool.connect();
@@ -62,7 +82,8 @@ export function createRoomsApi(pool) {
       await client.query("BEGIN");
       await client.query("DELETE FROM rooms WHERE expires < $1", [now]);
       await client.query("INSERT INTO rooms(code,settings,created,expires) VALUES ($1,$2,$3,$4)", [room.code, room.settings, now, now + roomLife]);
-      await client.query("INSERT INTO sailors(room,seat,id,token,name,seen) VALUES ($1,0,$2,$3,$4,$5)", [room.code, id, token, name, now]);
+      await client.query("INSERT INTO sailors(room,seat,id,token,name,seen,user_id) VALUES ($1,0,$2,$3,$4,$5,$6)",
+        [room.code, id, token, name, now, user ? user.id : null]);
       await client.query("COMMIT");
     } catch (error) {
       await client.query("ROLLBACK");
@@ -73,31 +94,33 @@ export function createRoomsApi(pool) {
     return ok({ ...(await view(room, now)), id, token });
   }
 
-  async function join(data, name, code, now) {
+  async function join(data, name, code, user, now) {
     if (!/^[A-Z2-9]{7}$/.test(code)) return failure("Digite os 7 caracteres do código.", 400);
     const room = await one("SELECT * FROM rooms WHERE code=$1 AND expires>$2", [code, now]);
     if (!room) return failure("Sala não encontrada ou expirada.", 404);
     if (room.starts) return failure("A regata desta sala já começou.", 409);
+    const blocked = await gate(user, JSON.parse(room.settings));
+    if (blocked) return blocked;
     await pool.query(`DELETE FROM sailors WHERE room=$1 AND seat>0 AND seen<$2 AND
       EXISTS(SELECT 1 FROM rooms WHERE code=$3 AND starts IS NULL)`, [code, now - 90000, code]);
     const id = crypto.randomUUID(), token = crypto.randomUUID();
-    const result = await pool.query(`INSERT INTO sailors(room,seat,id,token,name,seen)
-      SELECT $1, free.seat, $2, $3, $4, $5 FROM (SELECT 1 AS seat UNION ALL SELECT 2 UNION ALL SELECT 3 UNION ALL SELECT 4 UNION ALL SELECT 5) free
+    const result = await pool.query(`INSERT INTO sailors(room,seat,id,token,name,seen,user_id)
+      SELECT $1, free.seat, $2, $3, $4, $5, $9 FROM (SELECT 1 AS seat UNION ALL SELECT 2 UNION ALL SELECT 3 UNION ALL SELECT 4 UNION ALL SELECT 5) free
       WHERE EXISTS (SELECT 1 FROM rooms WHERE code=$6 AND starts IS NULL AND expires>$7)
         AND NOT EXISTS (SELECT 1 FROM sailors WHERE room=$8 AND seat=free.seat) ORDER BY free.seat LIMIT 1`,
-      [code, id, token, name, now, code, now, code]);
+      [code, id, token, name, now, code, now, code, user ? user.id : null]);
     if (!result.rowCount) return failure("A sala está cheia ou a regata já começou.", 409);
     return ok({ ...(await view(room, now)), id, token });
   }
 
-  async function handle(action, data) {
+  async function handle(action, data, user = null) {
     const now = Date.now();
     const name = textName(data.name);
     const code = typeof data.code === "string" ? data.code.toUpperCase() : "";
     if (action === "create" || action === "join") {
       if (name.length < 1 || name.length > 24 || /[\p{Cc}\p{Cf}]/u.test(name)) return failure("Digite um nome de até 24 caracteres.", 400);
-      if (action === "create") return create(data, name, now);
-      return join(data, name, code, now);
+      if (action === "create") return create(data, name, user, now);
+      return join(data, name, code, user, now);
     }
 
     if (!/^[A-Z2-9]{7}$/.test(code) || typeof data.token !== "string" || data.token.length !== 36) return failure("Sala indisponível.", 404);
@@ -108,6 +131,25 @@ export function createRoomsApi(pool) {
       if (member.seat === 0 && !member.starts) await pool.query("DELETE FROM rooms WHERE code=$1 AND starts IS NULL", [code]);
       else await pool.query("DELETE FROM sailors WHERE room=$1 AND token=$2", [code, data.token]);
       return ok({ ok: true });
+    }
+    // Encerramento pelo anfitrião (ADR-0008): grava quem chegou em que posição e lança os
+    // pontos ranqueados. A trava contra encerramento duplo é o UPDATE de rooms.finished,
+    // dentro da transação de recordRoomResult.
+    if (action === "finish") {
+      if (member.seat !== 0) return failure("Somente o anfitrião pode encerrar a regata.", 403);
+      if (!member.starts) return failure("A regata ainda não largou.", 409);
+      if (member.finished) return failure("A regata desta sala já foi encerrada.", 409);
+      const { rows: sailors } = await pool.query("SELECT seat,id,name,user_id,boat FROM sailors WHERE room=$1 ORDER BY seat", [code]);
+      const entries = sailors.map(sailor => {
+        const boat = sailor.boat ? JSON.parse(sailor.boat) : null;
+        return { seat: sailor.seat, userId: sailor.user_id, name: sailor.name,
+          finish: boat && Number.isFinite(boat.finish) ? boat.finish : null };
+      });
+      const result = await career.recordRoomResult({
+        roomCode: code, settings: JSON.parse(member.settings), entries, at: now });
+      if (result.status !== 200) return result;
+      const current = await one("SELECT * FROM rooms WHERE code=$1", [code]);
+      return ok({ ...(await view(current, now)), ranked: result.body.ranked, results: result.body.results });
     }
     if (action === "start" || action === "configure") {
       if (member.seat !== 0) return failure("Somente o anfitrião pode ajustar ou iniciar a regata.", 403);
