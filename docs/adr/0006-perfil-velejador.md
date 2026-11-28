@@ -1,0 +1,35 @@
+# ADR-0006 — Perfil do velejador: foto, país e clube
+
+Estado: proposto. Aguardando aceite do responsável pelo projeto na issue #33. O número é provisório e segue a ordem de merge.
+
+Issue: sailstation/sail-simulator-pro#33 (depende da #32, da #15 e da #31).
+
+Contexto: regatas reais têm clube e país; o simulador da vida real (épico #19) precisa do mesmo vínculo para rankings, equipes e campeonatos. Com o login obrigatório (ADR-0005) existe conta verificada, mas nenhuma identidade pública. A equipe definiu (27/11/2026, aceite do responsável pendente) que o perfil — foto, país representado e clube — passa a ser obrigatório antes de jogar. Não existe base própria de clubes do mundo e o projeto proíbe contêineres, evita serviços de terceiros e não aceita dependência nova sem ADR.
+
+Alternativas:
+- **Foto de perfil:** (a) `bytea` no PostgreSQL — backup e exclusão de conta (LGPD) saem de graça com o banco, sem caminho novo no sistema de arquivos nem mudança na unit `sail@` (as releases são diretórios trocados a cada deploy, sem diretório persistente gravável pelo app); (b) diretório fora da release — exige `ReadWritePaths` novo, rotina de backup própria e migração manual entre servidores; (c) serviço de objetos (S3 e similares) — terceiro, custo e credencial a mais. Escolhida (a): com o limite de 2 MB por foto, o volume na escala atual é pequeno e todo o ciclo de vida fica no banco.
+- **Bandeiras:** (a) emoji Unicode (indicadores regionais), renderizado pela fonte do sistema — zero assets, zero licença a gerenciar; (b) pacote de SVGs (ex.: Twemoji, CC-BY 4.0) — aparência uniforme, mas mais um asset com atribuição. Escolhida (a); se a renderização divergir demais entre plataformas, (b) fica como troca localizada na tela de perfil.
+- **Nomes dos países:** (a) `Intl.DisplayNames` do navegador (pt/en/es/fr de graça, sem dado embutido); (b) lista traduzida mantida no repositório — 249 nomes para revisar e traduzir. Escolhida (a); o servidor valida só o código ISO 3166-1 alfa-2, embutido de fonte oficial.
+- **Base de clubes:** as alternativas da própria issue — texto livre (duplicatas, sem ranking por clube), lista mantida à mão (inviável para o mundo) ou OpenStreetMap (ODbL, **a verificar**) com cadastro moderado de clubes novos. Escolhida a terceira, como proposto na issue.
+- **Tratamento de imagem** (reencode, remoção de EXIF, redimensionamento) exigiria dependência nativa (sharp/libvips), que a regra do projeto proíbe sem ADR próprio. Aceito o risco documentado nas consequências.
+
+Decisão:
+- **Perfil obrigatório com quatro campos** — nome de exibição (2–30 caracteres), país (ISO 3166-1 alfa-2), clube (da tabela `clubs`) e foto. Enquanto o perfil estiver incompleto e o login ligado, os estáticos do jogo redirecionam para `/perfil.html` e `/api/rooms/*` responde 403 ("Complete seu perfil"). Com o login desligado nada muda: o site e as salas funcionam como hoje e a API de perfil responde 401 (não há sessão).
+- **Modelo** em `db/migrations/0002_perfil.sql`: `profiles` (1:1 com `users`, `ON DELETE CASCADE` — a exclusão da conta apaga foto e vínculos, atendendo à LGPD) e `clubs` (nome, país, cidade, `status` `approved`/`pending`/`rejected`, `source` `seed`/`osm`/`player`, `verified` para "dados conferidos por humano" e `created_by`). O clube só aparece para os demais depois de aprovado; a sugestão pendente fica visível somente para quem a criou, que pode jogar com ela enquanto isso.
+- **Foto no PostgreSQL (`bytea`)**: até 2 MB, somente JPEG/PNG/WebP conferidos pelos bytes iniciais do arquivo (o `Content-Type` declarado não é confiável), servida apenas com sessão, com o `Content-Type` gravado, `X-Content-Type-Options: nosniff` (já global) e `Cache-Control: private`. Sem dependência nova.
+- **API `/api/profile/*`** (`server/profile.mjs`), sempre com sessão e com a mesma proteção CSRF por `Origin` do ADR-0005: `get`, `save`, `countries` (lista fechada validada no servidor), `photo` (upload binário; GET em `/api/profile/photo[/<id>]` para exibir), `clubs/search` (busca por nome com limite máximo de 50 e paginação por `offset`) e `clubs/suggest` (máximo 5 sugestões por usuário por hora; sugestão repetida de clube já aprovado devolve o existente). Falta de foto ou de clube mantém o perfil incompleto.
+- **Países:** o servidor embute a lista oficial ISO 3166-1 alfa-2 (fonte: iso.org/iso-3166-country-codes.html) só para validação; a tela monta nomes em português com `Intl.DisplayNames` do navegador e bandeiras com emoji Unicode, sem assets nem chamadas externas.
+- **Semente honesta:** cinco clubes brasileiros reais com dados públicos (nome, cidade, país), gravados com `verified=false` ("a verificar") — a conferência é humana e posterior. Nenhum dado inventado além do publicamente conhecido.
+- **Importação do OpenStreetMap offline:** `scripts/import-clubs-osm.mjs` lê um extrato JSON do Overpass (`leisure=sailing_club`/`club=sailing`) e emite SQL para revisão e aplicação manual; o SQL gerado carrega a atribuição "© OpenStreetMap contributors, ODbL 1.0". O script **não roda no deploy** nem em tempo de execução. A compatibilidade da ODbL (atribuição e compartilhamento pela igualdade da base derivada) precisa ser confirmada antes da primeira importação real — registrado como pendência da issue.
+- **Moderação mínima:** sem interface nesta entrega; aprovação e rejeição de clubes pendentes por SQL documentado em `docs/infra/servidor.md`. Fila de moderação com interface e denúncia de fotos ficam para issue própria.
+- **Cliente:** tela `/perfil.html` com o mesmo visual da tela de login, alcançada por redirecionamento do servidor (sem sessão → `/login.html`; sessão sem perfil completo → `/perfil.html`); o jogo ganha o botão "Sair" pendente da #32, que só aparece quando há sessão.
+
+Consequências:
+- Cada requisição de estático ou de sala com login ligado passa a consultar também o perfil (uma consulta indexada a mais; custo aceitável na escala atual, como no ADR-0005).
+- O EXIF da foto não é removido nem a imagem é reencodada (exigiria dependência nativa): metadados como GPS podem permanecer no arquivo servido aos demais jogadores. Pendência registrada; a mitigação definitiva é o reencode numa issue futura.
+- A moderação manual por SQL não escala; sem ela, clubes sugeridos ficam pendentes (visíveis só ao autor) e nada quebra.
+- A foto em `bytea` engorda o `pg_dump`; com 2 MB por jogador isso só importa em outra escala — a saída (arquivos fora da release ou objeto) está descrita nas alternativas.
+- Emoji de bandeira varia de aparência entre sistemas (no Windows, Chrome mostra as letras do código em vez da bandeira); aceito por ora.
+- `deploy/e2e.mjs` passa a cobrir o fluxo de perfil (gate, busca, sugestão, upload e foto) no ambiente de teste.
+
+Critérios de validação: os critérios de aceite da #33; `node --test` com PostgreSQL real e cobertura ≥ 80% em `server/`, localmente e no CI; `deploy/e2e.mjs` verde no ambiente de teste incluindo o bloqueio por perfil incompleto; revisão de segurança do upload de foto antes do merge; verificação documentada da licença ODbL antes da primeira importação; aceite do responsável na issue #33.
