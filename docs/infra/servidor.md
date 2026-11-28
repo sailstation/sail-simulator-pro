@@ -1,6 +1,6 @@
 # Servidor do Sail Simulator Pro
 
-Decisões registradas no [ADR-0003](../adr/0003-hospedagem-postgresql.md) (hospedagem), no [ADR-0004](../adr/0004-postgresql-banco-do-projeto.md) (backend nativo com PostgreSQL), no [ADR-0005](../adr/0005-contas-login-confirmacao-email.md) (contas e login obrigatório), no [ADR-0006](../adr/0006-perfil-velejador.md) (perfil do velejador) e no [ADR-0007](../adr/0007-equipes-convites-chat.md) (equipes, convites e chat). Docker e contêineres são proibidos: todos os serviços rodam nativos.
+Decisões registradas no [ADR-0003](../adr/0003-hospedagem-postgresql.md) (hospedagem), no [ADR-0004](../adr/0004-postgresql-banco-do-projeto.md) (backend nativo com PostgreSQL), no [ADR-0005](../adr/0005-contas-login-confirmacao-email.md) (contas e login obrigatório), no [ADR-0006](../adr/0006-perfil-velejador.md) (perfil do velejador), no [ADR-0007](../adr/0007-equipes-convites-chat.md) (equipes, convites e chat) e no [ADR-0008](../adr/0008-progressao-pontos-licencas.md) (progressão, pontos e licenças). Docker e contêineres são proibidos: todos os serviços rodam nativos.
 
 | Ambiente | Endereço | O que publica |
 | --- | --- | --- |
@@ -116,6 +116,29 @@ sudo -u postgres psql sail_prod -c "UPDATE team_message_reports SET status='reso
 ```
 
 - O `deploy/e2e.mjs` cobre o fluxo com dois usuários (criar equipe, convidar por e-mail e por nome, aceitar, conversar, denunciar, apagar mensagem, sair e apagar a equipe). Interface de moderação fica para issue futura.
+
+## Progressão e carreira (ADR-0008)
+
+A API fica em `/api/career/*` e exige sessão (401 sem ela) e perfil completo (403 incompleto), mesmo com o login desligado. A tela é `/carreira.html`, alcançada pelo botão "Carreira" no cabeçalho do jogo, ao lado de "Equipe".
+
+- **Modelo** (migração `0005_progressao.sql`): `point_entries` (livro-razão de pontos, **só acréscimo** — o saldo é a soma; nunca UPDATE nem DELETE pela aplicação), `achievements` (provas: `tutorial:<classe>` e `regata-limpa` reportadas pelo cliente, `regatas:<n>` computadas pelo servidor), `license_grants` (licenças conquistadas; concessão automática ao cumprir os requisitos, sem revogação por queda de pontos), `room_results` + `room_result_entries` (quem chegou em que posição; sem FK para `rooms` — a sala expira, o resultado fica). `rooms.finished` marca o encerramento pelo anfitrião e `sailors.user_id` liga a vaga à conta.
+- **Verificação**: enquanto o servidor autoritativo (#10/#18) não existe, pontos e provas nascem com `verification='client'` — só contam regatas encerradas pelo anfitrião, no modo Avançado, com pelo menos 2 participantes. Salas sem `mode` são abertas (`iniciante`) e não pontuam.
+- **Elegibilidade**: criar/entrar em sala no modo Avançado de classe com categoria avançada (420, Lightning, Star, 29er, 49er, J/24, Nacra 17, SailGP) exige a licença correspondente, verificada no servidor. O catálogo de classes e a escada de licenças são constantes de `server/career.mjs`; a tabela de pontos é configurável na criação da API (`pointsFor`).
+- **Moderação (manual, por enquanto)** — ajuste de pontos é um lançamento novo no livro-razão (nunca UPDATE); a concessão automática reavalia a escada no próximo evento da conta (ou na próxima consulta à carreira):
+
+```sh
+# extrato e saldo de um velejador
+sudo -u postgres psql sail_prod -c "SELECT points, source, reason, verification, to_timestamp(created/1000) FROM point_entries WHERE user_id='<user_id>' ORDER BY id"
+sudo -u postgres psql sail_prod -c "SELECT COALESCE(sum(points),0) AS saldo FROM point_entries WHERE user_id='<user_id>'"
+# bonificar ou penalizar (points positivo ou negativo; o motivo aparece no extrato do jogador)
+sudo -u postgres psql sail_prod -c "INSERT INTO point_entries(user_id,points,source,reason,verification,created) VALUES('<user_id>',-10,'adjustment','Penalidade: resultado forjado na sala X','server',(extract(epoch from now())*1000)::bigint)"
+# revogar uma licença (a reavaliação automática não a reconcede se os requisitos não estiverem mais cumpridos)
+sudo -u postgres psql sail_prod -c "DELETE FROM license_grants WHERE user_id='<user_id>' AND license='<licenca>'"
+# conceder manualmente (ex.: licença honorária)
+sudo -u postgres psql sail_prod -c "INSERT INTO license_grants(user_id,license,created) VALUES('<user_id>','<licenca>',(extract(epoch from now())*1000)::bigint) ON CONFLICT DO NOTHING"
+```
+
+- O `deploy/e2e.mjs` cobre a consulta da carreira, o reporte de prova, a recusa de sala ranqueada para iniciante, a aceitação de sala aberta e a pontuação de uma regata avançada encerrada. Interface de moderação fica para issue futura.
 
 ### Transição do login (por que nada trava)
 

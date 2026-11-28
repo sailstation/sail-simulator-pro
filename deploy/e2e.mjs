@@ -133,6 +133,40 @@ const [, view] = await call("rooms", "sync", { code: h.code, token: h.token }); 
 ok(rec.boat.x === 7 && rec.boat.y === -19 && rec.token === undefined, "posição preservada e token oculto");
 for (const g of guests) await call("rooms", "leave", { code: h.code, token: g.token }); await call("rooms", "leave", { code: h.code, token: h.token });
 
+// Carreira (ADR-0008): consulta, prova reportada pelo cliente, sala ranqueada de classe
+// avançada recusada para iniciante, sala aberta aceita e pontos por regata avançada encerrada.
+const [, carreira0] = await call("career", "get", {});
+ok(carreira0.license.id === "iniciante" && carreira0.points === 0, "carreira nasce com a licença Iniciante e zero pontos");
+ok(carreira0.classes.filter(c => ["420", "lightning", "star"].includes(c.id)).every(c => c.tiers.join() === "inicial,avancada"),
+  "420, Lightning e Star aparecem nos dois níveis");
+ok((await fetch(`${base}/carreira.html`, { headers: { cookie } })).status === 200, "tela Minha carreira abre");
+ok((await call("career", "achievement", { achievement: "tutorial:optimist" }))[0] === 200, "prova de tutorial reportada pelo cliente");
+ok((await call("career", "achievement", { achievement: "regatas:3" }))[0] === 400, "marco de regatas não é reportável pelo cliente");
+const [, elegibilidade] = await call("career", "eligible", { boatClass: "star", mode: "avancado" });
+ok(elegibilidade.allowed === false && elegibilidade.requires === "clube", "sala ranqueada de Star exige a licença Clube");
+ok((await call("rooms", "create", { name: "Ranqueada", settings: { ...settings, mode: "avancado" } }))[0] === 403,
+  "iniciante não cria sala ranqueada de classe avançada");
+const [sAberta, salaAberta] = await call("rooms", "create", { name: "Aberta", settings });
+ok(sAberta === 200 && salaAberta.settings.mode === "iniciante", "sala aberta da mesma classe segue aceita");
+await call("rooms", "leave", { code: salaAberta.code, token: salaAberta.token });
+// Regata avançada de classe inicial (Optimist) entre os dois velejadores: pontua de verdade.
+const [sAv, salaAv] = await call("rooms", "create", { name: "Piloto E2E", settings: { ...settings, boatClass: "optimist", mode: "avancado" } });
+ok(sAv === 200, "iniciante cria sala avançada de classe inicial");
+const [sJoinAv, guestAv] = await call("rooms", "join", { code: salaAv.code, name: "Trip E2E" }, tripulante);
+ok(sJoinAv === 200, "segundo velejador entra na sala avançada");
+await call("rooms", "start", { code: salaAv.code, token: salaAv.token });
+ok((await call("rooms", "sync", { code: salaAv.code, token: salaAv.token, boat: { ...boat, finish: 100 } }))[0] === 200, "chegada do anfitrião");
+ok((await call("rooms", "sync", { code: salaAv.code, token: guestAv.token, boat: { ...boat, finish: 130 } }))[0] === 200, "chegada do convidado");
+ok((await call("rooms", "finish", { code: salaAv.code, token: guestAv.token }, tripulante))[0] === 403, "convidado não encerra a regata");
+const [sFim, fim] = await call("rooms", "finish", { code: salaAv.code, token: salaAv.token });
+ok(sFim === 200 && fim.ranked === true, "anfitrião encerra a regata");
+ok(fim.results[0].position === 1 && fim.results[0].points === 2 && fim.results[1].points === 1, "pontos por posição e tamanho da flotilha");
+ok((await call("rooms", "finish", { code: salaAv.code, token: salaAv.token }))[0] === 409, "encerramento é único");
+const [, carreira1] = await call("career", "get", {});
+ok(carreira1.points === 2 && carreira1.history[0].source === "room" && carreira1.history[0].verification === "client",
+  "pontos no extrato, marcados como verificação do cliente");
+ok(carreira1.achievements.some(a => a.id === "regatas:1"), "marco de primeira regata registrado");
+
 // Sair encerra o acesso.
 ok((await call("auth", "logout", {}))[0] === 200, "sair");
 ok((await call("rooms", "create", { name: "x", settings }))[0] === 401, "sem sessão depois de sair");
