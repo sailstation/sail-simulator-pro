@@ -30,7 +30,6 @@ async function api(action, body) {
   return [response.ok, data];
 }
 
-const flag = code => String.fromCodePoint(...[...code].map(c => 0x1F1E6 + c.charCodeAt(0) - 65));
 const countryNames = new Intl.DisplayNames(["pt-BR"], { type: "region" });
 const hora = ms => new Date(ms).toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" });
 
@@ -92,7 +91,8 @@ function renderEquipes() {
     sigla.className = "sigla";
     sigla.textContent = team.tag;
     const nome = document.createElement("span");
-    nome.textContent = team.name + (team.country ? ` ${flag(team.country)}` : "");
+    nome.textContent = team.name;
+    if (team.country) nome.append(" ", bandeira(team.country)); // Twemoji CC-BY 4.0 (bandeiras.js)
     item.append(sigla, nome);
     const selo = document.createElement("span");
     selo.className = "selo";
@@ -406,7 +406,7 @@ async function preencherPaises() {
     .map(code => ({ code, name: countryNames.of(code) || code }))
     .sort((a, b) => a.name.localeCompare(b.name, "pt-BR"));
   select.replaceChildren(new Option("Sem país", ""));
-  for (const { code, name } of options) select.add(new Option(`${flag(code)} ${name}`, code));
+  for (const { code, name } of options) select.add(new Option(bandeiraRotulo(code, name), code));
 }
 
 async function carregar() {

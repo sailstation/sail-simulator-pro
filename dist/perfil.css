@@ -84,3 +84,11 @@ fieldset button {
   font-size: 14px;
   cursor: pointer;
 }
+
+/* Bandeiras Twemoji servidas pelo próprio site (ADR-0006, ajuste de 28/11/2026). */
+.bandeira { width: 1.35em; height: auto; vertical-align: -0.22em; border-radius: 2px; }
+.bandeira-texto { font-size: .8em; font-weight: 600; letter-spacing: .04em; }
+.pais-linha { display: flex; align-items: center; gap: .5rem; }
+.pais-linha select { flex: 1; }
+.pais-linha .bandeira { width: 1.7em; }
+.atribuicao { margin-top: 1rem; font-size: .75rem; opacity: .65; text-align: center; }
