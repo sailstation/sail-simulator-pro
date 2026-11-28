@@ -1,6 +1,6 @@
 # ADR-0003 — Hospedagem própria com PostgreSQL, deploy contínuo e ambiente de teste
 
-Estado: proposto. Aguardando aceite do responsável pelo projeto na issue #29. O número é provisório e segue a ordem de merge (o ADR-0002 está no PR #28).
+Estado: aceito (28/11/2026, por delegação do Marcos e do Guilherme — formaliza a decisão já em produção desde o merge do PR #30; issue #29 fechada).
 
 Issue: sailstation/sail-simulator-pro#29.
 

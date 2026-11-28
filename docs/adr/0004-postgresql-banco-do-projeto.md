@@ -1,6 +1,6 @@
 # ADR-0004 — PostgreSQL como banco do projeto
 
-Estado: proposto. Aguardando aceite do responsável pelo projeto na issue #31. O número é provisório e segue a ordem de merge (o ADR-0002 está no PR #28 e o ADR-0003 no PR #30).
+Estado: aceito (28/11/2026, por delegação do Marcos e do Guilherme — formaliza a decisão já em produção desde o merge do PR #37; issue #31 fechada).
 
 Issue: sailstation/sail-simulator-pro#31.
 

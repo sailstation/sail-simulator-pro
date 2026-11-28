@@ -1,6 +1,6 @@
 # ADR-0002 — Repositório canônico
 
-Estado: proposto. Aguardando aceite do responsável pelo projeto na issue #27.
+Estado: aceito (28/11/2026, por delegação do Marcos e do Guilherme — formaliza a decisão já aplicada desde o merge do PR #28; issue #27 fechada).
 
 Issue: sailstation/sail-simulator-pro#27.
 
