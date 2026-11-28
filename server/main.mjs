@@ -1,9 +1,9 @@
 // Servidor do Sail Simulator Pro: estáticos de dist/, API /api/auth/*, /api/profile/*,
-// /api/teams/* e /api/rooms/* e /__deploy (ADR-0004, ADR-0005, ADR-0006 e ADR-0007). Com o
+// /api/teams/*, /api/career/* e /api/rooms/* e /__deploy (ADR-0004 a ADR-0008). Com o
 // login obrigatório ligado, sem sessão válida o site redireciona para /login.html e a API
 // responde 401; com sessão e perfil incompleto (nome, país e clube — a foto é opcional,
-// ADR-0006), os estáticos do jogo redirecionam para /perfil.html e as APIs de salas e de
-// equipes respondem 403.
+// ADR-0006), os estáticos do jogo redirecionam para /perfil.html e as APIs de salas, de
+// equipes e de carreira respondem 403.
 // Variáveis de ambiente: DATABASE_URL (obrigatória), PORT (padrão 9000), SAIL_ENV
 // ("test" habilita a rota de confirmação usada pelo e2e e liga o login sempre),
 // SAIL_LOGIN_REQUIRED (liga/desliga o login; padrão: ligado com SMTP_HOST, desligado sem),
@@ -19,6 +19,7 @@ import { createRoomsApi } from "./rooms.mjs";
 import { createAuthApi } from "./auth.mjs";
 import { createProfileApi } from "./profile.mjs";
 import { createTeamsApi } from "./teams.mjs";
+import { createCareerApi } from "./career.mjs";
 import { createPow } from "./pow.mjs";
 import { createMailer } from "./mail.mjs";
 
@@ -98,9 +99,10 @@ async function readBody(req, res, maxBytes = MAX_BODY) {
   return Buffer.concat(chunks);
 }
 
-export function createApp({ pool, deployInfo = "{}", assets = loadAssets(), auth, loginRequired = true, profile, teams }) {
+export function createApp({ pool, deployInfo = "{}", assets = loadAssets(), auth, loginRequired = true, profile, teams, career }) {
   if (!auth) throw new Error("createApp precisa de auth (createAuthApi).");
-  const rooms = createRoomsApi(pool);
+  const carreira = career ?? createCareerApi(pool);
+  const rooms = createRoomsApi(pool, { career: carreira });
   const profiles = profile ?? createProfileApi(pool);
   const equipes = teams ?? createTeamsApi(pool);
 
@@ -220,16 +222,37 @@ export function createApp({ pool, deployInfo = "{}", assets = loadAssets(), auth
     }
   }
 
+  // API de carreira (ADR-0008): mesma regra de acesso das equipes — sessão (401) e perfil
+  // completo (403), sempre, mesmo com o login desligado.
+  async function handleCareer(req, res, pathname) {
+    const user = await auth.session(auth.tokenFrom(req));
+    if (!user) return reply(res, { error: "Entre para continuar." }, 401);
+    if (!await profiles.complete(user.id)) {
+      return reply(res, { error: "Complete seu perfil (nome, país e clube) para ver a carreira." }, 403);
+    }
+    const data = await jsonPost(req, res);
+    if (data === null) return;
+    try {
+      const result = await carreira.handle(pathname.slice("/api/career/".length), data, user);
+      reply(res, result.body, result.status);
+    } catch (error) {
+      console.error("falha na carreira", error);
+      reply(res, { error: "Não foi possível concluir agora. Tente de novo." }, 503);
+    }
+  }
+
   async function handleRooms(req, res, pathname) {
     const data = await jsonPost(req, res);
     if (data === null) return;
+    // A sessão é resolvida sempre (com o login desligado pode não haver): é ela que liga a
+    // vaga à conta (pontos, ADR-0008) e habilita o gate das salas ranqueadas.
+    const user = await auth.session(auth.tokenFrom(req));
     if (loginRequired) {
-      const user = await auth.session(auth.tokenFrom(req));
       if (!user) return reply(res, { error: "Entre para jogar." }, 401);
       if (!await profiles.complete(user.id)) return reply(res, { error: "Complete seu perfil (nome, país e clube) para jogar." }, 403);
     }
     try {
-      const result = await rooms.handle(pathname.split("/").pop(), data);
+      const result = await rooms.handle(pathname.split("/").pop(), data, user);
       reply(res, result.body, result.status);
     } catch (error) {
       console.error("falha na sala", error);
@@ -285,6 +308,7 @@ export function createApp({ pool, deployInfo = "{}", assets = loadAssets(), auth
       if (pathname.startsWith("/api/auth/")) return await handleAuth(req, res, pathname);
       if (pathname.startsWith("/api/profile/")) return await handleProfile(req, res, pathname);
       if (pathname.startsWith("/api/teams/")) return await handleTeams(req, res, pathname);
+      if (pathname.startsWith("/api/career/")) return await handleCareer(req, res, pathname);
       if (pathname.startsWith("/api/rooms/")) return await handleRooms(req, res, pathname);
       return await serveStatic(req, res, pathname);
     } catch (error) {

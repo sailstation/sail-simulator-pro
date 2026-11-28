@@ -1,0 +1,41 @@
+<!doctype html><html lang="pt-BR"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><meta name="theme-color" content="#0d1b26"><meta name="robots" content="noindex"><title>Minha carreira — Sail Simulator Pro</title><meta name="description" content="Sua licença, pontos, provas e classes liberadas na Campanha."><link rel="stylesheet" href="login.css"><link rel="stylesheet" href="perfil.css"><link rel="stylesheet" href="carreira.css"></head>
+<body>
+<main class="tela">
+  <section class="cartao cartao-largo" aria-labelledby="titulo">
+    <p class="marca">Sail Simulator <strong>PRO</strong></p>
+    <h1 id="titulo">Minha carreira</h1>
+
+    <section class="resumo" aria-live="polite">
+      <p class="licenca-atual">Licença <strong id="licenca-atual">—</strong></p>
+      <p class="pontos-atuais"><strong id="pontos-atuais">0</strong> pontos</p>
+    </section>
+
+    <section>
+      <h2>Licenças</h2>
+      <ul id="lista-licencas" class="lista"></ul>
+    </section>
+
+    <section>
+      <h2>Classes</h2>
+      <p class="nota">Classes iniciais são livres para treino e salas abertas. A categoria avançada exige a licença indicada.</p>
+      <ul id="lista-classes" class="lista"></ul>
+    </section>
+
+    <section>
+      <h2>Provas</h2>
+      <ul id="lista-provas" class="lista"></ul>
+      <p id="sem-provas" class="nota" hidden>Você ainda não conquistou provas. Complete tutoriais e corra regatas no modo Avançado.</p>
+    </section>
+
+    <section>
+      <h2>Extrato de pontos</h2>
+      <ul id="lista-extrato" class="lista"></ul>
+      <p id="sem-extrato" class="nota" hidden>Nenhum lançamento ainda. Pontos vêm de regatas no modo Avançado com pelo menos dois velejadores.</p>
+    </section>
+
+    <p id="mensagem" role="status" aria-live="polite" hidden></p>
+    <p class="linha"><a href="/">Voltar ao jogo</a></p>
+  </section>
+</main>
+<script src="carreira.js" defer></script>
+</body></html>
