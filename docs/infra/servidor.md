@@ -1,6 +1,6 @@
 # Servidor do Sail Simulator Pro
 
-Decisões registradas no [ADR-0003](../adr/0003-hospedagem-postgresql.md) (hospedagem), no [ADR-0004](../adr/0004-postgresql-banco-do-projeto.md) (backend nativo com PostgreSQL), no [ADR-0005](../adr/0005-contas-login-confirmacao-email.md) (contas e login obrigatório) e no [ADR-0006](../adr/0006-perfil-velejador.md) (perfil do velejador). Docker e contêineres são proibidos: todos os serviços rodam nativos.
+Decisões registradas no [ADR-0003](../adr/0003-hospedagem-postgresql.md) (hospedagem), no [ADR-0004](../adr/0004-postgresql-banco-do-projeto.md) (backend nativo com PostgreSQL), no [ADR-0005](../adr/0005-contas-login-confirmacao-email.md) (contas e login obrigatório), no [ADR-0006](../adr/0006-perfil-velejador.md) (perfil do velejador) e no [ADR-0007](../adr/0007-equipes-convites-chat.md) (equipes, convites e chat). Docker e contêineres são proibidos: todos os serviços rodam nativos.
 
 | Ambiente | Endereço | O que publica |
 | --- | --- | --- |
@@ -66,6 +66,7 @@ Variáveis do backend (além de `PORT` e `DATABASE_URL`):
 | `SAIL_POW_SECRET` | `/opt/sail/{prod,test}.secrets.env` | segredo HMAC dos desafios do captcha de prova de trabalho; sem ele o processo gera um aleatório na partida (desafios em aberto invalidam no reinício; avisa no log) |
 | `SAIL_POW_BITS` | opcional, padrão 16 | dificuldade do captcha (bits zero exigidos no hash) |
 | `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASS`, `SMTP_FROM` | `/opt/sail/{prod,test}.secrets.env` | envio dos e-mails de confirmação e recuperação; porta 587 usa STARTTLS, 465 TLS implícito, `SMTP_TLS=off` desliga (relay local). Sem `SMTP_HOST`, os e-mails vão para o log do serviço (`journalctl -u sail@…`) em vez de serem enviados |
+| `SAIL_TEAM_MAX_MEMBERS` | opcional, padrão 10 | limite de membros por equipe (ADR-0007); os demais tetos (equipes por jogador, convites/hora, mensagens/minuto) são constantes de `server/teams.mjs` |
 
 Os `.env` versionados são reinstalados pelo GitOps a cada mudança em `deploy/`; por isso os segredos ficam em `/opt/sail/{prod,test}.secrets.env` (a unit `sail@` lê os dois arquivos, com o de segredos opcional via `EnvironmentFile=-`). O `install.sh` cria o arquivo vazio com permissão 0600 se ele não existir e **nunca o sobrescreve**; o conteúdo é preenchido à mão no servidor e nunca vai para o repositório:
 
@@ -93,6 +94,28 @@ sudo -u postgres psql sail_prod -c "UPDATE clubs SET status='rejected' WHERE id=
 ```
 
 - **Importação do OpenStreetMap (offline, nunca no deploy)**: gere o extrato no Overpass (`[out:json];(nwr["leisure"="sailing_club"];nwr["club"="sailing"];);out tags;`), rode `node scripts/import-clubs-osm.mjs extrato.json --country BR > clubes.sql`, revise o SQL (a atribuição ODbL vai no cabeçalho) e aplique com `psql`. A compatibilidade da ODbL precisa estar confirmada (issue #33) antes da primeira importação real.
+
+## Equipes (ADR-0007)
+
+A API fica em `/api/teams/*` e exige sessão (401 sem ela) e perfil completo (403 incompleto), mesmo com o login desligado — sem sessão não há a quem associar a equipe. A tela é `/equipe.html`, alcançada pelo botão "Equipe" no cabeçalho do jogo.
+
+- **Modelo** (migração `0004_equipes.sql`): `teams` (nome e sigla únicos normalizados, país opcional), `team_members` (papéis `captain`/`member`, uma equipe principal por jogador), `team_invites` (por conta, por e-mail não resolvido ou por link com hash de token; expiram em 7 dias), `team_messages` (chat; apagar é tombstone — o texto sai do banco) e `team_message_reports` (denúncias com cópia do texto).
+- **Limites**: membros por equipe `SAIL_TEAM_MAX_MEMBERS` (padrão 10); 5 equipes por jogador; 20 convites/hora por usuário; mensagens de até 500 caracteres, 10/minuto por usuário; 20 denúncias/hora. O chat é polling (`after=<id>`) — nenhum transporte novo na infra.
+- **Convite por e-mail não revela se a conta existe**: o convite é gravado com o e-mail, sem resolver a conta, e aparece para o dono do endereço quando ele consulta as próprias equipes.
+- **Moderação (manual, por enquanto)** — a fila de denúncias e as ações:
+
+```sh
+# denúncias abertas (a cópia do texto fica em excerpt, mesmo se a mensagem for apagada)
+sudo -u postgres psql sail_prod -c "SELECT id, team_id, reporter, reported_user, excerpt, reason, to_timestamp(created/1000) FROM team_message_reports WHERE status='open' ORDER BY created"
+# apagar a mensagem denunciada (tombstone: some da tela de todos no próximo polling)
+sudo -u postgres psql sail_prod -c "UPDATE team_messages SET body='', deleted=(extract(epoch from now())*1000)::bigint WHERE id=<message_id>"
+# remover o autor da equipe
+sudo -u postgres psql sail_prod -c "DELETE FROM team_members WHERE team_id='<team_id>' AND user_id='<user_id>'"
+# encerrar a denúncia
+sudo -u postgres psql sail_prod -c "UPDATE team_message_reports SET status='resolved' WHERE id='<id>'"
+```
+
+- O `deploy/e2e.mjs` cobre o fluxo com dois usuários (criar equipe, convidar por e-mail e por nome, aceitar, conversar, denunciar, apagar mensagem, sair e apagar a equipe). Interface de moderação fica para issue futura.
 
 ### Transição do login (por que nada trava)
 

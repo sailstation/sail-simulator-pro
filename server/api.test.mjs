@@ -383,7 +383,7 @@ test("estáticos com sessão: index na raiz, ETag com 304, 404 e /__deploy", asy
 test("migrações são idempotentes e ficam registradas em _migrations", async () => {
   await migrate(pool);
   const { rows } = await pool.query("SELECT name FROM _migrations");
-  assert.deepEqual(rows.map(r => r.name), ["0000_regatta_rooms.sql", "0001_contas.sql", "0002_perfil.sql", "0003_avatar_emoji.sql"]);
+  assert.deepEqual(rows.map(r => r.name), ["0000_regatta_rooms.sql", "0001_contas.sql", "0002_perfil.sql", "0003_avatar_emoji.sql", "0004_equipes.sql"]);
 });
 
 test("pool sem DATABASE_URL falha na hora", () => {
