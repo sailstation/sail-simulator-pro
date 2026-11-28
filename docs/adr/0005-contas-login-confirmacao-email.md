@@ -1,6 +1,6 @@
 # ADR-0005 — Contas, login e confirmação de e-mail
 
-Estado: proposto. Aguardando aceite do responsável pelo projeto na issue #32. O número é provisório e segue a ordem de merge.
+Estado: aceito (28/11/2026, por delegação do Marcos e do Guilherme; decisão registrada na issue #32, revisável por novo ADR).
 
 Issue: sailstation/sail-simulator-pro#32 (depende da #15 e da #31).
 

@@ -1,6 +1,6 @@
 # ADR-0007 — Equipes, convites e chat da equipe
 
-Estado: proposto. Aguardando aceite do responsável pelo projeto na issue #34. O número é provisório e segue a ordem de merge.
+Estado: aceito (28/11/2026, por delegação do Marcos e do Guilherme; decisão registrada na issue #34, revisável por novo ADR).
 
 Issue: sailstation/sail-simulator-pro#34 (depende da #32, #33, #31 e #15; prepara a #22).
 
